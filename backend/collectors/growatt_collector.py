@@ -22,23 +22,35 @@ import db
 
 log = logging.getLogger("growatt")
 
-# Candidate key names per metric. Growatt is wildly inconsistent across models,
-# so we accept the first one that yields a number.
+# Candidate key names per metric. Growatt is wildly inconsistent across models.
+# Candidates are tried in order across the whole (nested) response.
+#
+# battery_power is handled separately (sign convention) in extract_fields.
 FIELD_CANDIDATES: dict[str, list[str]] = {
     "battery_soc": ["capacity", "SOC", "soc", "batterySoc", "capacity1"],
-    "battery_voltage": ["vBat", "batteryVoltage", "vbat", "batVolt"],
-    "battery_power": ["batPower", "batteryPower", "pBat", "chargePower"],
-    "pv_power": ["ppv", "pPv", "ppvTotal", "solarPower", "ppv1"],
-    "pv_energy_today": ["epvToday", "epvtoday", "ppvToday", "eToday", "epv1Today"],
+    "battery_voltage": ["vBat", "vbat", "batteryVoltage", "batVolt", "batVoltage",
+                        "vBatteryVoltage", "vBatt"],
+    # PV power: ppv often reads 0 on SPF while PV is producing; try the per-string
+    # and alternate names first, and extract_fields computes vpv*ipv as a fallback.
+    "pv_power": ["ppv1", "ppv2", "pPv", "pvPower", "ppvTotal", "ppvtotal",
+                 "solarPower", "ppv"],
+    "pv_energy_today": ["epvToday", "epvtoday", "ppvToday", "eToday", "epv1Today",
+                        "epvTotal", "epv1Tot"],
     # Real local load for SPF off-grid models. Deliberately EXCLUDES "activePower"
     # and any rated/nominal field ("ratedPower"/"maxPower"/"rateVA") which report
     # the inverter's 5000 W nameplate, not the actual consumption.
     "load_power": ["pLocalLoad", "loadPower", "localLoadPower", "loadPowerTotal",
                    "outPutPower", "pacToUser", "rLoadPower"],
     "load_energy_today": ["elocalLoadToday", "loadEnergyToday", "eToUserToday"],
-    "inverter_temperature": ["temperature", "invTemp", "ipmTemperature", "temp"],
+    "inverter_temperature": ["tempInverter", "temperature", "invTemp",
+                             "ipmTemperature", "temp", "temp1", "temp2"],
 }
 STATUS_CANDIDATES = ["statusText", "status", "storageStatus", "deviceStatus"]
+
+# Fields where a 0 reading usually means "wrong field"; prefer the first
+# non-zero candidate (these candidate lists hold only same-quantity fields, so
+# this cannot accidentally pick a rated/nominal value).
+PREFER_NONZERO = {"battery_voltage", "pv_power", "inverter_temperature"}
 
 
 def _to_float(value: Any) -> float | None:
@@ -50,29 +62,45 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _dig_with_key(data: Any, keys: list[str], path: str = "") -> tuple[float | None, str | None]:
-    """Like _dig but also returns the dotted path of the matched key (for debugging)."""
+def _find_key_value(data: Any, key: str, path: str = "") -> tuple[float | None, str | None]:
+    """First numeric value of a single `key` anywhere in the tree, with its path."""
     if isinstance(data, dict):
-        for key in keys:
-            if key in data:
-                num = _to_float(data[key])
-                if num is not None:
-                    return num, path + key
+        if key in data:
+            num = _to_float(data[key])
+            if num is not None:
+                return num, path + key
         for k, value in data.items():
-            num, mk = _dig_with_key(value, keys, f"{path}{k}.")
+            num, mk = _find_key_value(value, key, f"{path}{k}.")
             if num is not None:
                 return num, mk
     elif isinstance(data, list):
         for i, item in enumerate(data):
-            num, mk = _dig_with_key(item, keys, f"{path}{i}.")
+            num, mk = _find_key_value(item, key, f"{path}{i}.")
             if num is not None:
                 return num, mk
     return None, None
 
 
+def _resolve(data: Any, keys: list[str], prefer_nonzero: bool = False) -> tuple[float | None, str | None]:
+    """
+    Resolve a metric by trying each candidate (in priority order) across the
+    whole response. With prefer_nonzero, the first non-zero match wins and a
+    zero match is only used as a last resort.
+    """
+    zero: tuple[float | None, str | None] = (None, None)
+    for key in keys:
+        val, mk = _find_key_value(data, key)
+        if val is None:
+            continue
+        if not prefer_nonzero or val != 0:
+            return val, mk
+        if zero[0] is None:
+            zero = (val, mk)
+    return zero
+
+
 def _dig(data: Any, keys: list[str]) -> float | None:
-    """Recursively search a nested dict/list for the first candidate key with a numeric value."""
-    return _dig_with_key(data, keys)[0]
+    return _resolve(data, keys)[0]
 
 
 def _flatten(data: Any, prefix: str = "") -> dict:
@@ -103,13 +131,24 @@ def log_raw_fields(raw: dict) -> None:
         return
     _debug_logged = True
     flat = {k: v for k, v in _flatten(raw).items() if v not in (None, "")}
-    log.info("=== Growatt raw response: %d fields (identify load_power here) ===", len(flat))
+
+    # The actionable list: numeric fields with a value != 0 - the real PV power,
+    # battery voltage, charge/discharge etc. live here.
+    nonzero = {k: v for k, v in flat.items() if _to_float(v) not in (None, 0.0)}
+    log.info("=== Growatt: %d non-zero numeric fields (identify PV/voltage/charge here) ===", len(nonzero))
+    for k in sorted(nonzero):
+        log.info("    %s = %s", k, nonzero[k])
+
+    log.info("=== Growatt: all %d fields ===", len(flat))
     for k in sorted(flat):
         log.info("    %s = %s", k, flat[k])
+
     log.info("=== Resolved metric <- source field ===")
     for name, cands in FIELD_CANDIDATES.items():
-        val, key = _dig_with_key(raw, cands)
+        val, key = _resolve(raw, cands, prefer_nonzero=(name in PREFER_NONZERO))
         log.info("    %s <- %s = %s", name, key, val)
+    bp = _battery_power(raw)
+    log.info("    battery_power (signed, +=charging) = %s", bp)
 
 
 def _dig_str(data: Any, keys: list[str]) -> str | None:
@@ -129,23 +168,52 @@ def _dig_str(data: Any, keys: list[str]) -> str | None:
     return None
 
 
+def _battery_power(raw: dict) -> float | None:
+    """
+    Battery power with the dashboard sign convention: POSITIVE = charging,
+    NEGATIVE = discharging.
+
+    SPF models report a NEGATIVE batPower while charging, so the raw value is
+    inverted. Explicit charge/discharge fields, when present, take precedence.
+    """
+    charge, _ = _resolve(raw, ["chargePower", "pCharge", "batteryChargePower", "chargePwr"])
+    discharge, _ = _resolve(raw, ["dischargePower", "pDischarge", "batteryDischarge", "dischargePwr"])
+    if (charge and charge != 0) or (discharge and discharge != 0):
+        return round((charge or 0.0) - (discharge or 0.0), 1)
+    raw_bat, _ = _resolve(raw, ["batPower", "pBat", "batteryPower"])
+    if raw_bat is not None:
+        return round(-raw_bat, 1)  # invert: SPF reports negative while charging
+    return None
+
+
 def extract_fields(raw: dict) -> dict:
     """Map a raw Growatt response (any shape) to our metric field set."""
     fields: dict[str, Any] = {}
     for name, candidates in FIELD_CANDIDATES.items():
-        value = _dig(raw, candidates)
+        value, _ = _resolve(raw, candidates, prefer_nonzero=(name in PREFER_NONZERO))
         if value is not None:
             fields[name] = value
+
+    # Battery power with the correct sign (+ = charging, - = discharging).
+    bp = _battery_power(raw)
+    if bp is not None:
+        fields["battery_power"] = bp
+
+    # PV power fallback: ppv often reads 0 on SPF while the array is producing.
+    # If no PV power field gave a value, derive it from per-string voltage*current.
+    if not fields.get("pv_power"):
+        pv = 0.0
+        for vk, ik in (("vpv1", "ipv1"), ("vpv2", "ipv2")):
+            v = _find_key_value(raw, vk)[0]
+            i = _find_key_value(raw, ik)[0]
+            if v and i:
+                pv += v * i
+        if pv > 0:
+            fields["pv_power"] = round(pv, 1)
 
     status = _dig_str(raw, STATUS_CANDIDATES)
     if status is not None:
         fields["inverter_status"] = status
-
-    # Sign convention: battery_power positive = charging, negative = discharging.
-    # Some models report a separate discharge field; normalise if present.
-    discharge = _dig(raw, ["dischargePower", "pDischarge", "batteryDischarge"])
-    if discharge and discharge > 0 and not fields.get("battery_power"):
-        fields["battery_power"] = -discharge
     return fields
 
 

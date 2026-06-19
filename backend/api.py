@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime, timezone
-from statistics import median
+from datetime import date, datetime, timedelta, timezone
 
 try:
     from zoneinfo import ZoneInfo
@@ -130,6 +129,79 @@ def _energy_since_midnight(site: dict, field: str) -> float | None:
         if dt is not None and v is not None and dt >= midnight:
             points.append((dt, v))
     return _integrate_kwh(points)
+
+
+# ── SOC-based autonomy helpers ─────────────────────────────────────────────
+def _site_tz(site: dict):
+    """The site's tzinfo (falls back to UTC)."""
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(site.get("timezone") or "UTC")
+        except Exception:  # noqa: BLE001
+            pass
+    return timezone.utc
+
+
+def _parse_local(t: str, tz) -> datetime | None:
+    """Parse an Open-Meteo local timestamp (e.g. '2026-06-18T07:45') as UTC.
+
+    Open-Meteo returns sunrise/sunset without an offset when queried with a
+    timezone, so we attach the site tz and convert to UTC for comparison with
+    the UTC-stamped InfluxDB readings.
+    """
+    dt = _parse_iso(t)
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz)
+    return dt.astimezone(timezone.utc)
+
+
+def _soc_series(site: dict, days: int = 9) -> list[tuple[datetime, float]]:
+    """SOC readings over the last `days`, as a time-sorted [(utc_dt, soc)]."""
+    s = db.series(
+        config.BUCKET_ENERGY, "energy", ["battery_soc"],
+        site_id=site["site_id"], days=days, every="15m",
+    )
+    out: list[tuple[datetime, float]] = []
+    for t, v in zip(s.get("time", []), s.get("battery_soc", [])):
+        dt = _parse_iso(t)
+        if dt is not None and isinstance(v, (int, float)):
+            out.append((dt, float(v)))
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def _soc_at(series: list[tuple[datetime, float]], target: datetime,
+            tol_minutes: float = 90) -> float | None:
+    """Nearest SOC reading to `target`, or None if none within `tol_minutes`."""
+    best = None
+    best_gap = None
+    for dt, v in series:
+        gap = abs((dt - target).total_seconds())
+        if best_gap is None or gap < best_gap:
+            best_gap, best = gap, v
+    if best_gap is not None and best_gap <= tol_minutes * 60:
+        return best
+    return None
+
+
+def _solar_kwh_by_day(raw: dict, pv_kwp: float, pv_eff: float) -> dict[str, float]:
+    """Estimated PV yield (kWh) per local day from forecast shortwave radiation.
+
+    Same PSH method as /forecast/solar, but returns a {date: kWh} map covering
+    past_days + forecast so the autonomy simulation can look ahead.
+    """
+    h = raw.get("hourly") or {}
+    times = h.get("time") or []
+    radiation = h.get("shortwave_radiation") or []
+    per_day: dict[str, list[float]] = {}
+    for i, t in enumerate(times):
+        val = radiation[i] if i < len(radiation) else None
+        if val is None:
+            continue
+        per_day.setdefault(t[:10], []).append(float(val))
+    return {day: (sum(ghi) / 1000.0) * pv_kwp * pv_eff for day, ghi in per_day.items()}
 
 
 # ── /api/sites ─────────────────────────────────────────────────────────────
@@ -394,42 +466,180 @@ async def energy_today(site: str | None = Query(None)):
 
 
 # ── /api/energy/autonomy ───────────────────────────────────────────────────
+RESERVE_PCT = 10.0  # battery floor we never want to fall below
+
+
 @router.get("/energy/autonomy")
-async def energy_autonomy(site: str | None = Query(None), capacity_kwh: float = Query(None, ge=0)):
+async def energy_autonomy(
+    site: str | None = Query(None),
+    capacity_kwh: float = Query(None, ge=0),
+    pv_kwp: float = Query(None, ge=0),
+    pv_eff: float = Query(None, ge=0, le=1),
+):
+    """
+    Autonomy derived from the SOC history, not from momentary load.
+
+    The real rhythm of an off-grid household is captured by how the battery
+    actually moves: it drains overnight (battery-only, no PV) and recovers by
+    day. We measure that directly from the SOC curve in InfluxDB:
+
+      1. Night consumption  = SOC(sunset) - SOC(sunrise), averaged over the last
+         7 nights → the true draw with no PV contamination.
+      2. Daily balance      = SOC delta over 24 h (18:00→18:00), averaged → tells
+         whether the system is net gaining or losing.
+      3. Autonomy (with PV) = forward-simulate SOC using the solar forecast for
+         the coming days; report the days until SOC hits the 10 % reserve.
+         Autonomy (no PV)   = SOC × capacity / night-consumption rate (worst case).
+    """
     s = _resolve_site(site)
     sid = s["site_id"]
     capacity = s.get("battery_capacity_kwh", config.BATTERY_CAPACITY_KWH) if capacity_kwh is None else capacity_kwh
+    pv_kwp = s.get("pv_kwp", config.PV_KWP) if pv_kwp is None else pv_kwp
+    pv_eff = s.get("pv_efficiency", config.PV_EFFICIENCY) if pv_eff is None else pv_eff
+
     latest = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=sid)
     soc = latest.get("battery_soc")
-    current_load_w = latest.get("load_power")
+    reserve_kwh = (RESERVE_PCT / 100.0) * capacity
 
-    # Representative draw = MEDIAN of the last ~3 h of load_power. The median is
-    # robust to stale outliers (e.g. old 5000 W rated-power readings before the
-    # load_power fix). Fall back to the current load when history is too short.
-    series = db.series(config.BUCKET_ENERGY, "energy", ["load_power"], site_id=sid, days=1, every="30m")
-    loads = [v for v in series.get("load_power", []) if isinstance(v, (int, float)) and v >= 0]
-    recent = loads[-6:]  # last ~3 h
-    avg_load_w = None
-    source = None
-    if len(recent) >= 3:
-        avg_load_w = median(recent)
-        source = "median_3h"
-    if (avg_load_w is None or avg_load_w == 0) and isinstance(current_load_w, (int, float)):
-        avg_load_w = current_load_w
-        source = "current"
-    avg_load_kw = (avg_load_w / 1000.0) if avg_load_w else None
+    socs = _soc_series(s, days=9)
+    tz = _site_tz(s)
+    now_utc = datetime.now(timezone.utc)
 
-    hours_remaining = None
-    if soc is not None and avg_load_kw and avg_load_kw > 0:
-        hours_remaining = (soc / 100.0) * capacity / avg_load_kw
+    raw = {}
+    try:
+        raw = await _forecast_raw(s)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[%s] forecast fetch for /autonomy failed: %s", sid, exc)
+    daily = raw.get("daily") or {}
+    days_iso = daily.get("time") or []
+    sunrises = daily.get("sunrise") or []
+    sunsets = daily.get("sunset") or []
+
+    # 1. Night consumption: SOC drop from each sunset to the next sunrise.
+    nights: list[dict] = []
+    for i in range(len(days_iso) - 1):
+        sunset = _parse_local(sunsets[i], tz) if i < len(sunsets) else None
+        sunrise = _parse_local(sunrises[i + 1], tz) if i + 1 < len(sunrises) else None
+        if sunset is None or sunrise is None or sunrise >= now_utc:
+            continue
+        soc_set = _soc_at(socs, sunset)
+        soc_rise = _soc_at(socs, sunrise)
+        if soc_set is None or soc_rise is None:
+            continue
+        drop_pct = soc_set - soc_rise
+        hours = (sunrise - sunset).total_seconds() / 3600.0
+        if drop_pct <= 0 or hours <= 0:
+            continue  # charged overnight (generator/grid) → not a clean sample
+        kwh = drop_pct / 100.0 * capacity
+        nights.append({"kwh": kwh, "hours": hours, "power_w": kwh * 1000.0 / hours})
+    nights = nights[-7:]
+
+    night_kwh = night_power_w = night_hours = None
+    if nights:
+        n = len(nights)
+        night_kwh = sum(x["kwh"] for x in nights) / n
+        night_hours = sum(x["hours"] for x in nights) / n
+        night_power_w = sum(x["power_w"] for x in nights) / n
+
+    # 2. Daily balance: SOC delta over rolling 18:00→18:00 windows.
+    balances: list[float] = []
+    today_local = datetime.now(tz).date()
+    for back in range(1, 8):
+        end_local = datetime.combine(today_local, datetime.min.time(), tz).replace(hour=18) \
+            - timedelta(days=back - 1)
+        start_local = end_local - timedelta(days=1)
+        if end_local.astimezone(timezone.utc) > now_utc:
+            continue
+        soc_end = _soc_at(socs, end_local.astimezone(timezone.utc))
+        soc_start = _soc_at(socs, start_local.astimezone(timezone.utc))
+        if soc_end is None or soc_start is None:
+            continue
+        balances.append((soc_end - soc_start) / 100.0 * capacity)
+    daily_balance_kwh = (sum(balances) / len(balances)) if balances else None
+
+    # Average daily consumption from the energy balance: consumption = PV - ΔSOC.
+    # PV is integrated over whole local days so the windows line up.
+    daily_consumption_kwh = None
+    consumption_source = None
+    pv_series = db.series(config.BUCKET_ENERGY, "energy", ["pv_power"], site_id=sid, days=9, every="15m")
+    last_midnight = _site_midnight_utc(s)
+    win_days = 7
+    win_start = last_midnight - timedelta(days=win_days)
+    pv_pts = [
+        (_parse_iso(t), v) for t, v in zip(pv_series.get("time", []), pv_series.get("pv_power", []))
+        if _parse_iso(t) is not None and isinstance(v, (int, float))
+        and win_start <= _parse_iso(t) <= last_midnight
+    ]
+    pv_kwh_win = _integrate_kwh(pv_pts)
+    soc_start_win = _soc_at(socs, win_start)
+    soc_end_win = _soc_at(socs, last_midnight)
+    if pv_kwh_win is not None and soc_start_win is not None and soc_end_win is not None:
+        soc_change_kwh = (soc_end_win - soc_start_win) / 100.0 * capacity
+        cons = pv_kwh_win - soc_change_kwh
+        if cons > 0:
+            daily_consumption_kwh = cons / win_days
+            consumption_source = "energy_balance"
+    if daily_consumption_kwh is None and night_power_w:
+        # Fallback: extrapolate the night baseline across a full 24 h.
+        daily_consumption_kwh = night_power_w * 24.0 / 1000.0
+        consumption_source = "night_extrapolated"
+
+    # 3a. Autonomy with PV: forward-simulate from now using the solar forecast.
+    autonomy_days = None
+    autonomy_capped = False
+    if soc is not None and daily_consumption_kwh:
+        solar = _solar_kwh_by_day(raw, pv_kwp, pv_eff)
+        forecast_days = sorted(d for d in solar if d >= today_local.isoformat())
+        soc_kwh = soc / 100.0 * capacity
+        days = 0.0
+        if soc_kwh <= reserve_kwh:
+            autonomy_days = 0.0
+        else:
+            for day in forecast_days:
+                drain = daily_consumption_kwh - solar.get(day, 0.0)  # +ve = battery falls
+                if drain <= 0:
+                    soc_kwh = min(capacity, soc_kwh - drain)
+                    days += 1
+                    continue
+                if soc_kwh - drain >= reserve_kwh:
+                    soc_kwh -= drain
+                    days += 1
+                else:
+                    days += max(0.0, (soc_kwh - reserve_kwh) / drain)
+                    autonomy_days = round(days, 1)
+                    break
+            if autonomy_days is None:  # survived the whole forecast horizon
+                autonomy_days = round(days, 1)
+                autonomy_capped = True
+
+    # 3b. Autonomy without PV: usable energy / night-consumption rate.
+    autonomy_no_pv_days = None
+    if soc is not None and night_power_w:
+        usable_kwh = max(0.0, (soc - RESERVE_PCT) / 100.0 * capacity)
+        autonomy_no_pv_days = usable_kwh / (night_power_w / 1000.0) / 24.0
+
+    status = None
+    if autonomy_days is not None:
+        status = "green" if autonomy_days > 2 else "yellow" if autonomy_days >= 1 else "red"
 
     return {
         "site_id": sid,
         "soc": _round(soc),
         "capacity_kwh": capacity,
-        "avg_load_kw": _round(avg_load_kw, 3),
-        "load_source": source,
-        "hours_remaining": _round(hours_remaining, 1),
+        "reserve_pct": RESERVE_PCT,
+        "autonomy_days": _round(autonomy_days, 1),
+        "autonomy_capped": autonomy_capped,
+        "autonomy_no_pv_days": _round(autonomy_no_pv_days, 1),
+        "status": status,
+        "night_consumption_kwh": _round(night_kwh, 2),
+        "night_power_w": _round(night_power_w, 0),
+        "night_hours": _round(night_hours, 1),
+        "nights_used": len(nights),
+        "daily_balance_kwh": _round(daily_balance_kwh, 2),
+        "daily_consumption_kwh": _round(daily_consumption_kwh, 2),
+        "consumption_source": consumption_source,
+        # Backwards-compatible field (PV-aware days expressed in hours).
+        "hours_remaining": _round(autonomy_days * 24, 1) if autonomy_days is not None else None,
     }
 
 

@@ -62,6 +62,7 @@
   .stat .k{font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;color:var(--dim)}
   .stat .v{font-size:1.25rem;font-weight:700;margin-top:2px}
   .stat .v small{font-size:.8rem;color:var(--dim);font-weight:500}
+  .stat .sub{font-size:.72rem;color:var(--dim);margin-top:1px}
   .flow{font-size:.85rem;font-weight:600}
   .flow.charge{color:var(--good)} .flow.discharge{color:var(--warn)}
 
@@ -269,7 +270,8 @@ const I18N = {
     solar:"Solar",uv:"UV-Index",rain:"Regen",rain_today:"Heute",rate:"Rate",
     solar_yield:"Solarertrag (PSH)",wind_potential:"Wind-Potenzial",rain_hydro:"Regen / Hydro",energy_balance:"Energiebilanz",
     psh_hours:"Sonnenstunden",est_yield:"geschätzt",prod_window:"Produktionsfenster",
-    wind_hours:"Std > {n} km/h",cumulative_rain:"7-Tage-Summe",autonomy:"Autonomie",hours:"Std",
+    wind_hours:"Std > {n} km/h",cumulative_rain:"7-Tage-Summe",autonomy:"Autonomie",hours:"Std",days:"Tage",
+    night_use:"Ø Nachtverbrauch",daily_balance:"Ø Tagesbilanz",no_pv:"ohne PV",
     hit_rate:"Treffer Regen",temp_dev:"Ø Temp-Abweichung",wind_corr:"Wind-Korrektur",days_data:"Tage Daten",
     learning:"Lernphase",mc_learning:"Sammelt Daten … {n}/{m} Tage bis zur Aktivierung",
     setup_title:"Einrichtung nötig",first_run:"Noch nicht eingerichtet",open_setup:"Jetzt einrichten",no_conn:"Keine Verbindung zum Backend – zeige zuletzt gespeicherte Daten.",
@@ -287,7 +289,8 @@ const I18N = {
     solar:"Solar",uv:"UV index",rain:"Rain",rain_today:"Today",rate:"Rate",
     solar_yield:"Solar yield (PSH)",wind_potential:"Wind potential",rain_hydro:"Rain / Hydro",energy_balance:"Energy balance",
     psh_hours:"Peak sun hours",est_yield:"estimated",prod_window:"Production window",
-    wind_hours:"hrs > {n} km/h",cumulative_rain:"7-day total",autonomy:"Autonomy",hours:"hrs",
+    wind_hours:"hrs > {n} km/h",cumulative_rain:"7-day total",autonomy:"Autonomy",hours:"hrs",days:"days",
+    night_use:"Avg night use",daily_balance:"Avg daily balance",no_pv:"no PV",
     hit_rate:"Rain hit rate",temp_dev:"Avg temp deviation",wind_corr:"Wind correction",days_data:"Days of data",
     learning:"Learning",mc_learning:"Collecting data … {n}/{m} days until activation",
     setup_title:"Setup required",first_run:"Not configured yet",open_setup:"Set up now",no_conn:"No backend connection – showing last saved data.",
@@ -305,7 +308,8 @@ const I18N = {
     solar:"Solar",uv:"Índice UV",rain:"Lluvia",rain_today:"Hoy",rate:"Tasa",
     solar_yield:"Rendimiento solar (PSH)",wind_potential:"Potencial eólico",rain_hydro:"Lluvia / Hidro",energy_balance:"Balance energético",
     psh_hours:"Horas sol pico",est_yield:"estimado",prod_window:"Ventana producción",
-    wind_hours:"hrs > {n} km/h",cumulative_rain:"Total 7 días",autonomy:"Autonomía",hours:"hrs",
+    wind_hours:"hrs > {n} km/h",cumulative_rain:"Total 7 días",autonomy:"Autonomía",hours:"hrs",days:"días",
+    night_use:"Consumo nocturno",daily_balance:"Balance diario",no_pv:"sin FV",
     hit_rate:"Acierto lluvia",temp_dev:"Desv. temp media",wind_corr:"Corrección viento",days_data:"Días de datos",
     learning:"Aprendiendo",mc_learning:"Recopilando datos … {n}/{m} días hasta activar",
     setup_title:"Configuración necesaria",first_run:"Aún sin configurar",open_setup:"Configurar ahora",no_conn:"Sin conexión al backend – mostrando últimos datos.",
@@ -489,6 +493,11 @@ function renderBattery(cur, energyToday, autonomy){
   const e = energyToday || {}, a = autonomy || {};
   const stat = (k,v,unit,extra="") => `<div class="stat"><div class="k">${k}</div>
     <div class="v">${v}<small> ${unit}</small></div>${extra}</div>`;
+  const aColor = a.status==="green"?"var(--good)":a.status==="yellow"?"var(--warn)":a.status==="red"?"var(--bad)":"var(--dim)";
+  const aTxt = a.autonomy_days!=null ? (a.autonomy_capped?"&gt; ":"≈ ")+fmt(a.autonomy_days,1) : "–";
+  const aExtra = a.autonomy_no_pv_days!=null ? `<div class="sub">${t("no_pv")} ≈ ${fmt(a.autonomy_no_pv_days,1)} ${t("days")}</div>` : "";
+  const nightExtra = a.night_power_w!=null ? `<div class="sub">${fmt0(a.night_power_w)} W · ${fmt(a.night_hours,0)} ${t("hours")}</div>` : "";
+  const balTxt = a.daily_balance_kwh!=null ? (a.daily_balance_kwh>0?"+":"")+fmt(a.daily_balance_kwh,1) : "–";
   $("battery").innerHTML = `
     <div class="bat-visual">
       <div class="bat-cap"></div>
@@ -504,7 +513,10 @@ function renderBattery(cur, energyToday, autonomy){
       ${stat("🔌 "+t("voltage"), fmt(b.battery_voltage,1), "V")}
       ${stat("☀️ "+t("today_pv"), fmt(e.pv_energy_today,1), "kWh")}
       ${stat("🏠 "+t("today_load"), fmt(e.load_energy_today,1), "kWh")}
-      ${stat("⏳ "+t("autonomy"), a.hours_remaining!=null?"≈ "+fmt(a.hours_remaining,1):"–", t("hours"))}
+      <div class="stat"><div class="k">⏳ ${t("autonomy")}</div>
+        <div class="v" style="color:${aColor}">${aTxt}<small> ${t("days")}</small></div>${aExtra}</div>
+      ${stat("🌙 "+t("night_use"), a.night_consumption_kwh!=null?fmt(a.night_consumption_kwh,1):"–", "kWh", nightExtra)}
+      ${stat("⚖️ "+t("daily_balance"), balTxt, "kWh")}
     </div>`;
 }
 
@@ -620,9 +632,18 @@ function renderOffgrid(solar, energyToday, autonomy){
     <span class="v">${fmt0((d.corrected&&d.corrected.wind_max)??d.wind_max)} km/h · ${windDir(d.wind_dir)}</span></div>`).join("");
 
   let autoHtml="";
-  if(autonomy && autonomy.hours_remaining!=null){
+  if(autonomy && autonomy.autonomy_days!=null){
+    const a=autonomy;
+    const aColor = a.status==="green"?"var(--good)":a.status==="yellow"?"var(--warn)":a.status==="red"?"var(--bad)":"var(--dim)";
+    const pre = a.autonomy_capped?"&gt; ":"≈ ";
     autoHtml = `<div class="og-row"><span class="d">${t("autonomy")}</span>
-      <span class="v">≈ ${fmt(autonomy.hours_remaining)} ${t("hours")}</span></div>`;
+        <span class="v" style="color:${aColor}">${pre}${fmt(a.autonomy_days,1)} ${t("days")}</span></div>`
+      + (a.autonomy_no_pv_days!=null?`<div class="og-row"><span class="d">${t("no_pv")}</span>
+        <span class="v">≈ ${fmt(a.autonomy_no_pv_days,1)} ${t("days")}</span></div>`:"")
+      + (a.night_consumption_kwh!=null?`<div class="og-row"><span class="d">🌙 ${t("night_use")}</span>
+        <span class="v">${fmt(a.night_consumption_kwh,1)} kWh · ${fmt0(a.night_power_w)} W</span></div>`:"")
+      + (a.daily_balance_kwh!=null?`<div class="og-row"><span class="d">⚖️ ${t("daily_balance")}</span>
+        <span class="v">${a.daily_balance_kwh>0?"+":""}${fmt(a.daily_balance_kwh,1)} kWh</span></div>`:"");
   }
   let energyHtml="";
   if(energyToday && energyToday.pv_energy_today!=null){
@@ -714,7 +735,7 @@ async function refresh(){
     history: api(siteParam("/history?days=7")),
     battery: api(siteParam("/battery?days=7")),
     energyToday: api(siteParam("/energy/today")),
-    autonomy: api(siteParam(`/energy/autonomy?capacity_kwh=${cap}`)),
+    autonomy: api(siteParam(`/energy/autonomy?capacity_kwh=${cap}&pv_kwp=${pv}&pv_eff=${eff}`)),
     microclimate: api(siteParam("/microclimate")),
   };
   const results = {}; let anyCached=false, anyOk=false, oldest=Date.now();

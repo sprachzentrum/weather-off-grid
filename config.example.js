@@ -27,7 +27,9 @@ const CONFIG = {
     SHOW_MICROCLIMATE: true,  // Mikroklima-Korrekturen anzeigen
 
     // ── Energie ──────────────────────────────────────
-    BATTERY_CAPACITY_KWH: 9.6, // Gesamtkapazitaet fuer Prozent-Anzeige
+    BATTERY_CAPACITY_KWH: 9.6, // Gesamtkapazitaet fuer SOC-Anzeige
+    PV_KWP: 3.6,               // Installierte PV-Leistung in kWp
+    PV_EFFICIENCY: 0.75,        // System-Wirkungsgrad (Kabel, MPPT, Temp, Verschmutzung; 0.70-0.85 typisch)
 
     // ── Off-Grid ─────────────────────────────────────
     WIND_THRESHOLD_KMH: 10,  // Ab welcher Windgeschwindigkeit "nutzbar"

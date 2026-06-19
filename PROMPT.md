@@ -127,10 +127,14 @@ Felder in InfluxDB (measurement: `energy`, bucket: `energy`):
 
 - Speichert taeglich die aktuelle 7-Tage-Vorhersage in InfluxDB Bucket `forecasts`
 - Wird spaeter mit den tatsaechlich eingetretenen Wetterdaten verglichen
-- Felder: forecast_temp_max, forecast_temp_min, forecast_precipitation, forecast_windspeed_max, forecast_weathercode
-- Tag: `lead_days` (0 = heute, 1 = morgen, ... 6)
 - Kein API-Key noetig
 - Endpoint: `https://api.open-meteo.com/v1/forecast`
+
+**Wichtige Felder im API-Call:**
+- daily: temperature_2m_max, temperature_2m_min, precipitation_sum, windspeed_10m_max, windgusts_10m_max, weathercode, sunrise, sunset, sunshine_duration
+- hourly: shortwave_radiation, temperature_2m, windspeed_10m, winddirection_10m, windgusts_10m, precipitation, precipitation_probability, cloudcover, weathercode
+- `shortwave_radiation` (W/m², stuendlich) ist der Schluessel fuer die Solarertrag-Berechnung (siehe Off-Grid-Sektion)
+- Tag: `lead_days` (0 = heute, 1 = morgen, ... 6)
 
 ### 1.5 FastAPI Endpoints (backend/main.py)
 
@@ -138,12 +142,30 @@ Felder in InfluxDB (measurement: `energy`, bucket: `energy`):
 GET  /api/current          # Aktuelle Wetterdaten + Batterie-Status
 GET  /api/forecast         # Open-Meteo 7-Tage + Mikroklima-Korrektur
 GET  /api/forecast/hourly  # Stuendliche Vorhersage (24h)
+GET  /api/forecast/solar   # PSH + PV-Ertragsprognose pro Tag (7 Tage)
 GET  /api/history?days=7   # Historische Wetterdaten aus InfluxDB
 GET  /api/battery          # Batterie SOC + PV + Load Zeitreihe
 GET  /api/microclimate     # Korrektur-Statistiken (Trefferquoten)
 GET  /api/energy/today     # Tages-Energiebilanz
+GET  /api/energy/autonomy  # Geschaetzte Restautonomie in Stunden
 POST /api/ecowitt/webhook  # Ecowitt Custom Server Empfaenger
 GET  /health               # Healthcheck
+```
+
+**`/api/forecast/solar` Berechnung:**
+```python
+# Fuer jeden Tag der naechsten 7 Tage:
+# 1. Stuendliche shortwave_radiation (W/m²) von Open-Meteo holen
+# 2. PSH = sum(hourly_radiation) / 1000
+# 3. estimated_kwh = PSH * PV_KWP * PV_EFFICIENCY
+# 4. production_window = Stunden wo radiation > 100 W/m²
+# 5. Wenn historische Growatt-Daten vorhanden: Korrekturfaktor anwenden
+```
+
+**`/api/energy/autonomy` Berechnung:**
+```python
+# current_soc (%) * BATTERY_CAPACITY_KWH / avg_load_kw = hours_remaining
+# avg_load_kw aus den letzten 24h Growatt-Daten
 ```
 
 CORS aktivieren fuer Frontend-Zugriff.
@@ -202,10 +224,41 @@ Einzelne HTML-Datei. Laedt `config.js` (Nutzerkonfiguration) und kommuniziert mi
    - PV-Ertrag (Flaechen-Chart, letzte 7 Tage)
 
 7. **Off-Grid-Sektion:** (wenn CONFIG.SHOW_OFFGRID true)
-   - Sonnenstunden pro Tag (Prognose)
-   - Stunden Wind > Threshold
-   - Kumulative Regen-Prognose (fuer Hydro)
-   - Farbliche Bewertung: gruen/gelb/rot
+
+   **Solarertrag-Prognose (korrekte Berechnung, NICHT sunshine_duration):**
+
+   `sunshine_duration` von Open-Meteo zaehlt nur Stunden mit Direktstrahlung > 120 W/m² und ist fuer Solaranlagen unbrauchbar (ergibt z. B. 9,6h an einem Wintertag, obwohl die Anlage effektiv nur 4-5h produziert).
+
+   Stattdessen **Peak Sun Hours (PSH)** berechnen:
+   ```
+   PSH = Summe(shortwave_radiation[h] fuer alle Stunden des Tages) / 1000
+   ```
+   Dabei ist `shortwave_radiation` die stuendliche Global Horizontal Irradiance (GHI) in W/m² von Open-Meteo. Division durch 1000 W/m² ergibt die aequivalenten Volllaststunden.
+
+   Beispiel: An einem klaren Wintertag bei 32° S kommen typisch 3.5 bis 5.0 PSH zusammen, im Sommer 6 bis 7 PSH. Das entspricht der realen Erfahrung.
+
+   Anzeige pro Tag:
+   - **PSH** (Peak Sun Hours): z. B. "4,2 PSH"
+   - **Geschaetzter PV-Ertrag**: PSH x CONFIG.PV_KWP x CONFIG.PV_EFFICIENCY
+     Beispiel: 4,2 PSH x 3,6 kWp x 0,75 = 11,3 kWh
+   - **Produktionsfenster**: Stunden mit shortwave_radiation > 100 W/m² (wann die Anlage tatsaechlich laeuft)
+   - Farbliche Bewertung: gruen (> 4 PSH), gelb (2-4 PSH), rot (< 2 PSH)
+
+   Wenn Growatt-Daten vorhanden: tatsaechlichen PV-Ertrag neben Prognose anzeigen (Soll/Ist-Vergleich). Daraus langfristig einen Korrekturfaktor lernen (Verschattung, Panelausrichtung, Alterung).
+
+   **Wind-Potenzial:**
+   - Stunden mit Wind > CONFIG.WIND_THRESHOLD_KMH pro Tag
+   - Vorherrschende Windrichtung
+   - Fuer VAWT/HAWT Kleinwindkraft relevant
+
+   **Regen/Hydro-Prognose:**
+   - Kumulative Regenmenge naechste 7 Tage (mm)
+   - Relevanz fuer Mikro-Wasserkraft und Zisternen
+   - Farbliche Bewertung: blau (> 20 mm), grau (5-20 mm), rot (< 5 mm)
+
+   **Tages-Energiebilanz (wenn Growatt aktiv):**
+   - Balkendiagramm: PV-Ertrag vs. Verbrauch vs. Batterie-Delta
+   - Geschaetzte Autonomie: "Batterie reicht noch ~X Stunden" (basierend auf aktuellem SOC und durchschnittlichem Verbrauch)
 
 8. **Mikroklima-Statistik:** (wenn genuegend Daten vorhanden)
    - Trefferquote der Vorhersage (Regen ja/nein)
@@ -343,6 +396,8 @@ const CONFIG = {
     SHOW_MICROCLIMATE: true,
     WIND_THRESHOLD_KMH: 10,
     BATTERY_CAPACITY_KWH: 9.6,
+    PV_KWP: 3.6,              // installierte PV-Leistung in kWp
+    PV_EFFICIENCY: 0.75,       // System-Wirkungsgrad (0.70-0.85 typisch)
 };
 ```
 

@@ -1,136 +1,371 @@
-# Prompt: Wetter Dashboard (Open Source)
+# Prompt: Wetter El Durazno (Full Stack)
 
-## Aufgabe
+## Vision
 
-Baue ein konfigurierbares Wetter-Dashboard, das:
+Open-Source-Wetterstation + Energie-Dashboard mit **Mikroklima-Vorhersage**: Eine PWA, die Ecowitt-Wetterdaten und Growatt-Inverterdaten sammelt, speichert und daraus lernt, um eine individuelle Wettervorhersage zu erstellen, die genauer ist als regionale Modelle.
 
-1. **Live-Daten** von einer Ecowitt-Wetterstation anzeigt (via Ecowitt API v3)
-2. **7-Tage-Vorhersage** von Open-Meteo einbindet (kostenlos, kein API-Key nötig)
-3. **Historische Daten** als Diagramme darstellt (Temperatur, Wind, Regen der letzten 7 Tage)
-4. **Off-Grid-Relevanz** optional einblendet (Solar, Wind, Hydro)
-
-Das Projekt ist Open Source. Alle stationsspezifischen Daten (Koordinaten, API-Keys, MAC) werden aus einer separaten `config.js` gelesen, die nicht im Repo liegt.
+Anwendungsfall: Die Station steht in den Sierras de Cordoba auf 1.000 m. Regionale Vorhersagen treffen oft nicht zu, weil das Mikroklima 5 km entfernt schon anders ist. Nach Monaten der Datensammlung erkennt das System Korrekturfaktoren (z. B. "wenn Open-Meteo Regen meldet, regnet es hier nur in 30% der Faelle").
 
 ## Architektur
 
 ```
-index.html       ← Dashboard (Hauptdatei)
-config.js        ← Nutzerkonfiguration (nicht im Repo, in .gitignore)
-config.example.js ← Vorlage zum Kopieren
+┌─────────────────────────────────────────────────────┐
+│                    FRONTEND (PWA)                    │
+│  index.html + manifest.json + sw.js                 │
+│  Installierbar auf Handy, Offline-faehig            │
+├─────────────────────────────────────────────────────┤
+│                   BACKEND (FastAPI)                  │
+│  REST API: /api/current, /api/forecast,             │
+│            /api/history, /api/battery,              │
+│            /api/microclimate                        │
+├──────────────┬──────────────┬───────────────────────┤
+│  Ecowitt     │  Growatt     │  Open-Meteo           │
+│  Collector   │  Collector   │  Collector            │
+│  (Webhook +  │  (ShinePhone │  (Forecast +          │
+│   API Poll)  │   API Poll)  │   Historical)         │
+├──────────────┴──────────────┴───────────────────────┤
+│                   InfluxDB 2.x                      │
+│  Buckets: weather, energy, forecasts                │
+└─────────────────────────────────────────────────────┘
 ```
-
-`index.html` lädt `config.js` via `<script src="config.js"></script>` und erwartet ein globales `CONFIG`-Objekt. Wenn `config.js` fehlt oder `CONFIG` nicht definiert ist, zeigt das Dashboard einen freundlichen Setup-Hinweis statt zu crashen.
-
-## Konfiguration (CONFIG-Objekt)
-
-```javascript
-const CONFIG = {
-    STATION_NAME: 'Meine Wetterstation',
-    LATITUDE: -32.1559,
-    LONGITUDE: -64.7916,
-    ALTITUDE: 1000,
-    TIMEZONE: 'America/Argentina/Cordoba',
-    ECOWITT_APP_KEY: '...',
-    ECOWITT_API_KEY: '...',
-    ECOWITT_MAC: 'AA:BB:CC:DD:EE:FF',
-    UNITS: 'metric',       // oder 'imperial'
-    LANGUAGE: 'de',         // 'de', 'en', 'es'
-    REFRESH_INTERVAL: 300,  // Sekunden
-    SHOW_OFFGRID: true,
-    WIND_THRESHOLD_KMH: 10,
-};
-```
-
-## APIs
-
-### Open-Meteo (Vorhersage + Historie)
-- Doku: https://open-meteo.com/en/docs
-- Kein API-Key nötig
-- Forecast-Endpoint: `https://api.open-meteo.com/v1/forecast`
-- Koordinaten und Timezone aus CONFIG lesen
-- Beispiel-Call:
-```
-https://api.open-meteo.com/v1/forecast?latitude={CONFIG.LATITUDE}&longitude={CONFIG.LONGITUDE}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,windgusts_10m_max,weathercode,sunrise,sunset,sunshine_duration&hourly=temperature_2m,relativehumidity_2m,apparent_temperature,windspeed_10m,winddirection_10m,windgusts_10m,precipitation,precipitation_probability,pressure_msl,cloudcover,weathercode&timezone={CONFIG.TIMEZONE}&forecast_days=7&past_days=7
-```
-
-### Ecowitt API v3 (Live-Daten)
-- Doku: https://doc.ecowitt.net/web/#/apiv3
-- Endpoint: `https://api.ecowitt.net/api/v3/device/real_time`
-- Parameter: `application_key`, `api_key`, `mac` aus CONFIG
-- Call-back Parameter: `outdoor`, `indoor`, `solar_and_uvi`, `rainfall`, `wind`, `pressure`
-- CORS: die Ecowitt-API erlaubt Cross-Origin-Requests. Falls nicht, Fallback auf nur Open-Meteo.
-
-## Design-Vorgaben
-
-- **Dark Theme** (Hintergrund #1a1a2e oder ähnlich, Akzentfarbe Cyan/Teal #00d4aa)
-- **Responsive**: Handy (360px) bis Desktop (1400px+)
-- **Sprache**: nach CONFIG.LANGUAGE (Wochentage, Labels, Einheiten). Mindestens DE und EN.
-- **Einheiten**: metric (°C, km/h, mm, hPa) oder imperial (°F, mph, in, inHg)
-- **Wetter-Icons**: WMO-Weathercodes in SVG-Icons oder Emoji (Sonne, Wolken, Regen, Gewitter, Schnee, Nebel). Tag/Nacht-Variante basierend auf Sunrise/Sunset.
-- Chart-Library: Chart.js via CDN (`https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js`)
-
-## Sektionen des Dashboards
-
-### 1. Header
-- Stationsname aus CONFIG.STATION_NAME
-- Letzte Aktualisierung (Timestamp)
-- Sonnenauf-/untergang (aus Open-Meteo)
-
-### 2. Aktuell (Live-Daten von Ecowitt, Fallback auf Open-Meteo "current_weather")
-- Außentemperatur + gefühlte Temperatur
-- Luftfeuchtigkeit + Taupunkt
-- Windgeschwindigkeit + Böen + Richtung (mit Kompass-Anzeige als SVG)
-- Luftdruck (relativ)
-- Solar-Strahlung + UV-Index
-- Regenrate + Tagesregen
-
-### 3. 7-Tage-Vorhersage (Open-Meteo)
-- Kartenreihe: Tag, Icon, Min/Max-Temp, Niederschlagssumme, max. Wind
-- Horizontal scrollbar auf Handy
-
-### 4. Stündliche Vorhersage (nächste 24h)
-- Kompakter Streifen: Stunde, Icon, Temp, Regenwahrscheinlichkeit, Wind
-
-### 5. Diagramme (letzte 7 Tage + nächste 7 Tage)
-- Temperatur (Min/Max als Bereichs-Chart)
-- Wind (Durchschnitt + Böen)
-- Niederschlag (Balken)
-- Luftdruck (Linie)
-
-### 6. Off-Grid-Sektion (nur wenn CONFIG.SHOW_OFFGRID === true)
-- Sonnenstunden pro Tag (aus `sunshine_duration`)
-- Stunden mit Wind > CONFIG.WIND_THRESHOLD_KMH pro Tag
-- Kumulative Regen-Prognose (7 Tage, mm)
-- Einfache farbliche Bewertung: grün = gut, gelb = mäßig, rot = wenig
-
-## Technische Anforderungen
-
-- Alle API-Calls client-seitig (fetch), kein Backend
-- Config aus separater config.js (nicht inline)
-- Graceful Degradation: Ecowitt nicht erreichbar → nur Open-Meteo. Config fehlt → Setup-Hinweis.
-- Error-Handling: bei API-Fehlern Hinweis-Banner, kein Crash
-- Auto-Refresh laut CONFIG.REFRESH_INTERVAL
-- LocalStorage für letzte erfolgreiche Daten (Offline-Fallback)
-- Sauberer, kommentierter Code (Englisch), bereit für Open-Source-Beiträge
-- Keine externen Fonts (System-Font-Stack)
-- Keine Tracking-Scripts, keine Analytics, keine Cookies
 
 ## Dateistruktur
 
 ```
-index.html          ← Dashboard
-config.js           ← Nutzerkonfiguration (nicht im Repo)
-config.example.js   ← Vorlage
+wetter-el-durazno/
+├── backend/
+│   ├── main.py                    # FastAPI Server + API Endpoints
+│   ├── collectors/
+│   │   ├── ecowitt_collector.py   # Ecowitt Webhook-Empfaenger + API-Poller
+│   │   ├── growatt_collector.py   # Growatt ShinePhone API (Battery SOC, PV, Load)
+│   │   └── openmeteo_collector.py # Open-Meteo Forecast-Archiv (taeglich speichern)
+│   ├── forecast/
+│   │   └── microclimate.py        # Mikroklima-Korrekturmodell
+│   ├── import_historical.py       # Historische Daten importieren (Ecowitt CSV + Open-Meteo)
+│   └── requirements.txt
+├── frontend/
+│   ├── index.html                 # PWA Dashboard (Single File, laedt config.js)
+│   ├── manifest.json              # Web App Manifest (Add to Homescreen)
+│   ├── sw.js                      # Service Worker (Offline + Cache)
+│   └── icons/                     # PWA Icons (192x192, 512x512)
+├── docker-compose.yml             # InfluxDB + Backend
+├── config.example.js              # Frontend-Konfiguration
+├── config.example.env             # Backend-Konfiguration
+├── README.md
+├── CONTRIBUTING.md
+└── LICENSE
 ```
 
-## Qualitätskriterien
+## Phase 1: Backend + Datensammlung
 
-- [ ] Dashboard lädt ohne config.js und zeigt Setup-Hinweis
-- [ ] Dashboard lädt mit config.js und zeigt Daten
-- [ ] Ecowitt-API-Fehler blendet Banner ein, Rest funktioniert
-- [ ] Responsiv auf 360px und 1400px
-- [ ] Off-Grid-Sektion erscheint nur wenn SHOW_OFFGRID true
+### 1.1 Docker Setup (docker-compose.yml)
+
+Services:
+- **influxdb**: InfluxDB 2.x, Port 8086, persistenter Volume-Mount
+- **backend**: Python FastAPI, Port 8000, haengt von influxdb ab
+
+InfluxDB Buckets:
+- `weather`: Ecowitt-Stationsdaten (Temp, Wind, Regen, Solar, Druck, Feuchte)
+- `energy`: Growatt-Daten (Battery SOC, PV Power, Load, Charge/Discharge)
+- `forecasts`: Open-Meteo-Vorhersagen (archiviert, fuer Vergleich mit Realitaet)
+
+### 1.2 Ecowitt Collector (backend/collectors/ecowitt_collector.py)
+
+Zwei Modi:
+
+**Webhook-Empfaenger (bevorzugt):**
+- FastAPI-Endpoint `POST /api/ecowitt/webhook`
+- Ecowitt-Station pusht alle 60s via "Custom Server" (Ecowitt-Protokoll)
+- Parst die Form-Daten (tempf, humidity, windspeedmph, rainratein etc.)
+- Konvertiert zu metrisch und schreibt in InfluxDB Bucket `weather`
+
+**API-Poller (Fallback):**
+- Pollt `https://api.ecowitt.net/api/v3/device/real_time` alle 5 Min
+- Benoetigt ECOWITT_APP_KEY, ECOWITT_API_KEY, ECOWITT_MAC aus .env
+- Schreibt in InfluxDB Bucket `weather`
+
+Felder in InfluxDB (measurement: `station`):
+- temperature_outdoor (°C)
+- humidity_outdoor (%)
+- temperature_indoor (°C)
+- humidity_indoor (%)
+- temperature_feels_like (°C)
+- dewpoint (°C)
+- wind_speed (km/h)
+- wind_gust (km/h)
+- wind_direction (°)
+- pressure_relative (hPa)
+- pressure_absolute (hPa)
+- rain_rate (mm/h)
+- rain_daily (mm)
+- solar_radiation (W/m²)
+- uv_index
+
+### 1.3 Growatt Collector (backend/collectors/growatt_collector.py)
+
+- Library: `growattServer` (pip install growattServer)
+- Verwendet die **ShinePhone/Legacy API** (classic password auth), weil SPF 5000 ES die V1 API nicht unterstuetzt
+- Login: `api = growattServer.GrowattApi()`, `api.login(username, password)`
+- Daten holen: `api.plant_list()` → `api.storage_params(plant_id, inverter_sn)` oder `api.mix_detail(plant_id, inverter_sn)` (SPF kann als "storage" oder "mix" registriert sein)
+- Pollt alle 5 Minuten (Growatt-Server-Update-Intervall)
+- Login-Session cachen und bei 401 neu einloggen
+
+Felder in InfluxDB (measurement: `energy`, bucket: `energy`):
+- battery_soc (%)
+- battery_voltage (V)
+- battery_power (W, positiv = laden, negativ = entladen)
+- pv_power (W)
+- pv_energy_today (kWh)
+- load_power (W)
+- load_energy_today (kWh)
+- inverter_status (string)
+- inverter_temperature (°C)
+
+**Wichtig:** Growatt-Credentials (Username/Passwort) sind persoenlich. Im Open-Source-Code nur Platzhalter. Login-Daten ausschliesslich aus .env lesen.
+
+### 1.4 Open-Meteo Collector (backend/collectors/openmeteo_collector.py)
+
+- Speichert taeglich die aktuelle 7-Tage-Vorhersage in InfluxDB Bucket `forecasts`
+- Wird spaeter mit den tatsaechlich eingetretenen Wetterdaten verglichen
+- Felder: forecast_temp_max, forecast_temp_min, forecast_precipitation, forecast_windspeed_max, forecast_weathercode
+- Tag: `lead_days` (0 = heute, 1 = morgen, ... 6)
+- Kein API-Key noetig
+- Endpoint: `https://api.open-meteo.com/v1/forecast`
+
+### 1.5 FastAPI Endpoints (backend/main.py)
+
+```
+GET  /api/current          # Aktuelle Wetterdaten + Batterie-Status
+GET  /api/forecast         # Open-Meteo 7-Tage + Mikroklima-Korrektur
+GET  /api/forecast/hourly  # Stuendliche Vorhersage (24h)
+GET  /api/history?days=7   # Historische Wetterdaten aus InfluxDB
+GET  /api/battery          # Batterie SOC + PV + Load Zeitreihe
+GET  /api/microclimate     # Korrektur-Statistiken (Trefferquoten)
+GET  /api/energy/today     # Tages-Energiebilanz
+POST /api/ecowitt/webhook  # Ecowitt Custom Server Empfaenger
+GET  /health               # Healthcheck
+```
+
+CORS aktivieren fuer Frontend-Zugriff.
+
+## Phase 2: Frontend (PWA)
+
+### 2.1 Dashboard (frontend/index.html)
+
+Einzelne HTML-Datei. Laedt `config.js` (Nutzerkonfiguration) und kommuniziert mit dem Backend.
+
+**Config-Handling:**
+- `<script src="config.js"></script>` erwartet globales `CONFIG`
+- Wenn CONFIG fehlt: Setup-Hinweis anzeigen, nicht crashen
+- CONFIG.BACKEND_URL: URL des FastAPI Backends (z. B. `https://wetter.example.com/api`)
+
+**Design:**
+- Dark Theme (Hintergrund #0f0f1a, Karten #1a1a2e, Akzent #00d4aa Cyan/Teal)
+- System-Font-Stack (kein externer Font-Load)
+- Responsive: 360px (Handy) bis 1400px+ (Desktop)
+- Chart.js 4.x via CDN fuer Diagramme
+
+**Sektionen:**
+
+1. **Header:** Stationsname, Letzte Aktualisierung, Sonnenauf-/untergang
+
+2. **Batterie-Widget:** Prominente Anzeige:
+   - Grosse SOC-Anzeige als visueller Fuellstand (Batterie-Icon mit Fuellgrad)
+   - Farbe: gruen (>50%), gelb (20-50%), rot (<20%)
+   - Aktuell laden/entladen mit Leistung (z. B. "Laden 1.2 kW" / "Entladen 0.8 kW")
+   - PV-Leistung aktuell
+   - Last aktuell
+   - Tagesertrag PV / Tagesverbrauch
+
+3. **Aktuelles Wetter:** (von Backend /api/current)
+   - Aussentemperatur + gefuehlte Temp
+   - Luftfeuchtigkeit + Taupunkt
+   - Wind (Geschwindigkeit + Boeen + Richtung als SVG-Kompass)
+   - Luftdruck (relativ)
+   - Solar-Strahlung + UV-Index
+   - Regenrate + Tagesregen
+
+4. **7-Tage-Vorhersage:** (von Backend /api/forecast)
+   - Kartenreihe: Tag, WMO-Icon, Min/Max-Temp, Niederschlag, Wind
+   - Zeigt Mikroklima-Korrektur als kleinen Badge (z. B. "lokal -2°C" oder "Regen 30% statt 70%")
+   - Horizontal scrollbar auf Handy
+
+5. **Stuendliche Vorhersage:** (naechste 24h)
+   - Streifen: Stunde, Icon, Temp, Regenwahrscheinlichkeit, Wind
+
+6. **Diagramme:** (letzte 7 Tage + naechste 7 Tage)
+   - Temperatur (Min/Max Bereichs-Chart)
+   - Wind (Durchschnitt + Boeen)
+   - Niederschlag (Balken, Vorhersage vs. gemessen)
+   - Luftdruck (Linie)
+   - Batterie SOC (Linie, letzte 7 Tage)
+   - PV-Ertrag (Flaechen-Chart, letzte 7 Tage)
+
+7. **Off-Grid-Sektion:** (wenn CONFIG.SHOW_OFFGRID true)
+   - Sonnenstunden pro Tag (Prognose)
+   - Stunden Wind > Threshold
+   - Kumulative Regen-Prognose (fuer Hydro)
+   - Farbliche Bewertung: gruen/gelb/rot
+
+8. **Mikroklima-Statistik:** (wenn genuegend Daten vorhanden)
+   - Trefferquote der Vorhersage (Regen ja/nein)
+   - Durchschnittliche Temperatur-Abweichung
+   - Typische Wind-Korrektur
+   - "Lernfortschritt": Wie viele Tage Vergleichsdaten
+
+### 2.2 PWA Setup
+
+**manifest.json:**
+```json
+{
+  "name": "Wetter Dashboard",
+  "short_name": "Wetter",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#00d4aa",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+```
+
+**Service Worker (sw.js):**
+- Cache-First fuer statische Assets (HTML, JS, CSS, Icons)
+- Network-First fuer API-Calls (mit Cache-Fallback fuer Offline)
+- Periodischer Background-Fetch (wenn Browser unterstuetzt)
+
+**Installierbar:**
+- "Add to Homescreen" auf Android
+- Standalone-Modus (keine Browser-Leiste)
+- Auf iOS als Web-Clip installierbar
+
+### 2.3 Handy-Widgets
+
+Da native Widgets eine native App erfordern (und das den Scope sprengt), folgende Alternatekn:
+
+**Android:**
+- PWA-Shortcut auf Homescreen (manifest.json `shortcuts`)
+- Fuer echte Widgets: Tasker/KWGT Integration via API (Doku bereitstellen)
+
+**iOS:**
+- Scriptable App (JavaScript): Beispiel-Script bereitstellen, das die API abfragt und ein Widget rendert (`ios-widget.js`)
+- Shortcuts App: Shortcut-Template fuer Wetter-Abfrage
+
+Erstelle ein Beispiel-Script fuer iOS Scriptable: `extras/scriptable-widget.js`
+
+## Phase 3: Historischer Import + Mikroklima-Modell
+
+### 3.1 Historischer Import (backend/import_historical.py)
+
+Importiert zwei Datenquellen und fuegt sie in InfluxDB zusammen:
+
+**Ecowitt-Exportdaten:**
+- User laedt CSV-Export aus der Ecowitt-App/Web herunter (3 Jahre Daten)
+- Script parst die CSV (verschiedene Formate je nach Export-Version)
+- Schreibt in InfluxDB Bucket `weather` mit historischen Timestamps
+
+**Open-Meteo Historical Forecast API:**
+- Fuer denselben Zeitraum die archivierten Vorhersagen holen
+- Endpoint: `https://historical-forecast-api.open-meteo.com/v1/forecast`
+- Ermoeglicht sofortigen Vergleich: Was hat Open-Meteo vorhergesagt vs. was wurde lokal gemessen
+- Schreibt in InfluxDB Bucket `forecasts`
+
+### 3.2 Mikroklima-Korrekturmodell (backend/forecast/microclimate.py)
+
+Einfaches statistisches Modell (kein ML-Framework noetig):
+
+**Datenbasis:** Paare von (Open-Meteo-Vorhersage, lokale Messung) fuer jeden Tag.
+
+**Korrekturfaktoren:**
+1. **Temperatur-Bias:** Durchschnittliche Abweichung pro Monat und Tageszeit
+   - z. B. "Im Juni ist es lokal morgens 2°C kaelter als Open-Meteo vorhersagt"
+2. **Niederschlags-Wahrscheinlichkeit:** Bedingte Wahrscheinlichkeit
+   - P(lokal Regen | Open-Meteo sagt Regen) und P(lokal Regen | Open-Meteo sagt kein Regen)
+   - Aufgeschluesselt nach Windrichtung (z. B. bei Westwind regnet es eher)
+3. **Wind-Skalierung:** Verhaeltnis lokal/regional pro Windrichtung
+   - Topographie beeinflusst Wind stark; manche Richtungen werden kanalisiert
+
+**Anwendung:**
+- Open-Meteo-Vorhersage holen
+- Korrekturfaktoren anwenden
+- Korrigierte Vorhersage an Frontend liefern
+- Konfidenz anzeigen (basierend auf Datenmenge)
+
+**Minimum-Datenmenge:** 30 Tage vor Aktivierung, 90+ Tage fuer zuverlaessige saisonale Korrektur.
+
+## Phase 4: Konfiguration
+
+### Backend (.env)
+
+```env
+# InfluxDB
+INFLUXDB_URL=http://influxdb:8086
+INFLUXDB_TOKEN=mein-token
+INFLUXDB_ORG=wetter
+INFLUXDB_BUCKET_WEATHER=weather
+INFLUXDB_BUCKET_ENERGY=energy
+INFLUXDB_BUCKET_FORECASTS=forecasts
+
+# Ecowitt
+ECOWITT_APP_KEY=
+ECOWITT_API_KEY=
+ECOWITT_MAC=
+
+# Growatt (ShinePhone Login)
+GROWATT_USERNAME=
+GROWATT_PASSWORD=
+GROWATT_PLANT_ID=
+GROWATT_INVERTER_SN=
+
+# Standort
+LATITUDE=-32.1559
+LONGITUDE=-64.7916
+ALTITUDE=1000
+TIMEZONE=America/Argentina/Cordoba
+
+# Server
+BACKEND_PORT=8000
+```
+
+### Frontend (config.js)
+
+```javascript
+const CONFIG = {
+    STATION_NAME: 'Meine Wetterstation',
+    BACKEND_URL: 'https://wetter.example.com/api',
+    UNITS: 'metric',
+    LANGUAGE: 'de',
+    REFRESH_INTERVAL: 300,
+    SHOW_OFFGRID: true,
+    SHOW_BATTERY: true,
+    SHOW_MICROCLIMATE: true,
+    WIND_THRESHOLD_KMH: 10,
+    BATTERY_CAPACITY_KWH: 9.6,
+};
+```
+
+## Technische Anforderungen
+
+- Python 3.11+, FastAPI, uvicorn, influxdb-client, growattServer, httpx
+- Frontend: Vanilla HTML/CSS/JS, Chart.js 4.x via CDN
+- Docker + Docker Compose fuer Deployment
+- Kein Tracking, keine Analytics, keine Cookies
+- Sauberer, kommentierter Code (Englisch), bereit fuer Open-Source
+- Alle Credentials ausschliesslich aus .env / config.js
+
+## Qualitaetskriterien
+
+- [ ] Backend startet mit `docker compose up`
+- [ ] Ecowitt-Webhook empfaengt und speichert Daten
+- [ ] Growatt-Collector holt Battery SOC und PV-Daten
+- [ ] Frontend zeigt Batterie-Widget mit Fuellstand
+- [ ] PWA installierbar auf Android (Homescreen)
+- [ ] Offline-Modus zeigt letzte bekannte Daten
+- [ ] Historischer Import liest Ecowitt-CSV + Open-Meteo-Archiv
+- [ ] Mikroklima-Korrektur nach 30+ Tagen aktiv
+- [ ] Dashboard zeigt Korrektur-Badge in Vorhersage
+- [ ] iOS Scriptable Widget funktioniert
+- [ ] Responsive auf 360px und 1400px
 - [ ] Alle Texte in CONFIG.LANGUAGE
-- [ ] Charts rendern korrekt für 14-Tage-Zeitraum
-- [ ] Auto-Refresh funktioniert ohne Memory-Leak
-- [ ] Kein console.error im Normalbetrieb

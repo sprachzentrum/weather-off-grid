@@ -1,142 +1,184 @@
 # Wetter Dashboard
 
-Open-Source-Wetterstation-Dashboard für **Ecowitt**-Stationen mit **Open-Meteo**-Vorhersage und Off-Grid-Energierelevanz.
+Open-Source-Wetter- und Energie-Dashboard mit **Mikroklima-Vorhersage** fuer Ecowitt-Stationen und Growatt-Inverter.
 
-Einzelne HTML-Datei, kein Backend, kein Build-System. Einfach konfigurieren und auf jedem Webserver ablegen.
+Sammelt lokale Wetterdaten, vergleicht sie mit regionalen Vorhersagen und lernt daraus Korrekturfaktoren fuer dein Mikroklima. Dazu eine Batterie-Anzeige und Off-Grid-Energiebilanz. Als PWA installierbar auf dem Handy.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
+## Warum?
+
+Regionale Wettervorhersagen treffen in Berglagen oder besonderen Mikroklimata oft nicht zu. Wer 5 km von der naechsten Ortschaft entfernt lebt, kennt das: Dort regnet es, hier scheint die Sonne.
+
+Dieses Dashboard sammelt deine lokalen Messdaten, archiviert parallel die regionalen Vorhersagen und berechnet nach einigen Wochen automatische Korrekturfaktoren. Je laenger es laeuft, desto genauer wird die lokale Vorhersage.
+
 ## Features
 
-- **Live-Daten** von Ecowitt-Stationen (Temperatur, Wind, Regen, Solar, Luftdruck)
-- **7-Tage-Vorhersage** via [Open-Meteo](https://open-meteo.com/) (kostenlos, kein API-Key)
-- **Stündliche Vorhersage** (nächste 24 Stunden)
-- **Historische Diagramme** (letzte 7 Tage: Temperatur, Wind, Niederschlag, Luftdruck)
-- **Off-Grid-Sektion** (optional): Sonnenstunden-Prognose, Wind-Potenzial für Kleinwindkraft, Regen-Prognose für Mikro-Wasserkraft
-- Dark Theme, responsive (Handy + Desktop)
-- Auto-Refresh alle 5 Minuten
-- Offline-Fallback (letzte Daten im LocalStorage)
+**Wetter**
+- Live-Daten von Ecowitt-Stationen (Temperatur, Wind, Regen, Solar, Luftdruck)
+- 7-Tage-Vorhersage via Open-Meteo (kostenlos, kein API-Key)
+- Historische Diagramme (Temperatur, Wind, Niederschlag, Luftdruck)
+- Mikroklima-Korrektur: lernt aus dem Vergleich Vorhersage vs. Realitaet
 
-## Getestete Stationen
+**Energie**
+- Growatt-Inverter: Battery SOC, PV-Leistung, Last, Tagesertrag
+- Batterie-Widget mit visuellem Fuellstand
+- PV-Ertrags-Diagramme
 
-| Modell | Frequenz | Status |
-|--------|----------|--------|
-| Ecowitt WH2900 | 433 MHz | Getestet |
+**Off-Grid** (optional)
+- Sonnenstunden-Prognose fuer Solarertrag
+- Wind-Stunden fuer Kleinwindkraft (VAWT/HAWT)
+- Regen-Prognose fuer Mikro-Wasserkraft / Zisternen
 
-> Andere Ecowitt-Modelle mit API-Zugang (GW1000, GW1100, GW2000, HP2551 etc.) sollten ebenfalls funktionieren. Pull Requests mit Erfahrungsberichten sind willkommen!
+**App**
+- PWA: installierbar auf Android und iOS
+- Offline-Modus mit gecachten Daten
+- iOS Scriptable Widget (Beispiel-Script enthalten)
+
+## Architektur
+
+```
+Frontend (PWA)  ──→  Backend (FastAPI)  ──→  InfluxDB
+                          ↑
+              ┌───────────┼───────────┐
+          Ecowitt     Growatt     Open-Meteo
+          Station     Inverter    Forecast
+```
+
+Alles laeuft per Docker Compose auf einem Server.
 
 ## Schnellstart
 
-### 1. Ecowitt API-Keys generieren
+### Voraussetzungen
 
-1. Registriere dich auf [api.ecowitt.net](https://api.ecowitt.net)
-2. Erstelle unter "API Key" einen **Application Key**
-3. Generiere einen **API Key**
-4. Notiere die MAC-Adresse deiner Station (findbar in der Ecowitt-App unter Geräteeinstellungen)
+- Server mit Docker + Docker Compose (VPS, Raspberry Pi, NAS)
+- Ecowitt-Wetterstation mit WiFi (WH2900, GW1000, GW2000 o. ae.)
+- Optional: Growatt-Inverter mit Datalogger (ShinePhone-Zugang)
 
-### 2. Konfiguration
-
-Kopiere die Beispieldatei und trage deine Daten ein:
+### 1. Repo klonen und konfigurieren
 
 ```bash
-cp config.example.js config.js
+git clone https://github.com/DEIN-USER/wetter-el-durazno.git
+cd wetter-el-durazno
+cp config.example.env .env
+cp config.example.js frontend/config.js
 ```
 
-Bearbeite `config.js`:
+### 2. Credentials eintragen
 
+**.env** (Backend):
+```env
+ECOWITT_APP_KEY=dein-key          # von api.ecowitt.net
+ECOWITT_API_KEY=dein-key
+ECOWITT_MAC=AA:BB:CC:DD:EE:FF
+GROWATT_USERNAME=dein-username     # ShinePhone Login
+GROWATT_PASSWORD=dein-passwort
+LATITUDE=-32.1559                 # dein Standort
+LONGITUDE=-64.7916
+```
+
+**frontend/config.js** (Frontend):
 ```javascript
 const CONFIG = {
-    // -- Deine Station --
     STATION_NAME: 'Meine Wetterstation',
-    LATITUDE: -32.1559,
-    LONGITUDE: -64.7916,
-    ALTITUDE: 1000,
-    TIMEZONE: 'America/Argentina/Cordoba',
-
-    // -- Ecowitt API --
-    ECOWITT_APP_KEY: 'dein-application-key',
-    ECOWITT_API_KEY: 'dein-api-key',
-    ECOWITT_MAC: 'AA:BB:CC:DD:EE:FF',
-
-    // -- Optionen --
-    UNITS: 'metric',
-    LANGUAGE: 'de',
-    REFRESH_INTERVAL: 300,
-    SHOW_OFFGRID: true,
+    BACKEND_URL: 'https://wetter.example.com/api',
+    // ...
 };
 ```
 
-### 3. Deployment
-
-Die Dateien auf einen beliebigen Webserver kopieren:
+### 3. Starten
 
 ```bash
-scp index.html config.js user@server:/var/www/html/wetter/
+docker compose up -d
 ```
 
-Oder lokal testen:
+Dashboard unter `http://dein-server:8000` oeffnen.
+
+### 4. Ecowitt Custom Server einrichten (optional, empfohlen)
+
+In der Ecowitt-App: Geraet → Weiteres → Custom Server:
+- Protokoll: Ecowitt
+- Server: IP oder Domain deines Servers
+- Port: 8000
+- Pfad: /api/ecowitt/webhook
+
+Damit pusht die Station alle 60 Sekunden Live-Daten direkt ans Backend.
+
+### 5. Historische Daten importieren (optional)
 
 ```bash
-python3 -m http.server 8080
-# dann http://localhost:8080 aufrufen
+# Ecowitt-CSV-Export in import/ ablegen
+docker compose exec backend python import_historical.py --ecowitt import/ecowitt_export.csv
+# Open-Meteo-Vergleichsdaten automatisch holen
+docker compose exec backend python import_historical.py --openmeteo --years 3
 ```
 
 ## Konfigurationsreferenz
 
+### Backend (.env)
+
+| Variable | Beschreibung |
+|----------|-------------|
+| `ECOWITT_APP_KEY` | Ecowitt Application Key |
+| `ECOWITT_API_KEY` | Ecowitt API Key |
+| `ECOWITT_MAC` | MAC-Adresse der Station |
+| `GROWATT_USERNAME` | ShinePhone Benutzername |
+| `GROWATT_PASSWORD` | ShinePhone Passwort |
+| `LATITUDE` | Breitengrad (negativ = Sued) |
+| `LONGITUDE` | Laengengrad (negativ = West) |
+| `ALTITUDE` | Hoehe in Metern |
+| `TIMEZONE` | IANA Timezone |
+
+### Frontend (config.js)
+
 | Parameter | Typ | Beschreibung |
 |-----------|-----|-------------|
-| `STATION_NAME` | String | Anzeigename im Dashboard |
-| `LATITUDE` | Number | Breitengrad (negativ = Süd) |
-| `LONGITUDE` | Number | Längengrad (negativ = West) |
-| `ALTITUDE` | Number | Höhe in Metern ü. M. |
-| `TIMEZONE` | String | [IANA Timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) |
-| `ECOWITT_APP_KEY` | String | Application Key von api.ecowitt.net |
-| `ECOWITT_API_KEY` | String | API Key von api.ecowitt.net |
-| `ECOWITT_MAC` | String | MAC-Adresse der Station |
-| `UNITS` | String | `metric` (°C, km/h, mm, hPa) oder `imperial` |
-| `LANGUAGE` | String | `de`, `en`, oder `es` |
-| `REFRESH_INTERVAL` | Number | Auto-Refresh in Sekunden (min. 60) |
-| `SHOW_OFFGRID` | Boolean | Off-Grid-Sektion anzeigen (Solar/Wind/Hydro) |
+| `STATION_NAME` | String | Anzeigename |
+| `BACKEND_URL` | String | URL des FastAPI Backends |
+| `SHOW_BATTERY` | Boolean | Batterie-Widget anzeigen |
+| `SHOW_OFFGRID` | Boolean | Off-Grid-Sektion anzeigen |
+| `SHOW_MICROCLIMATE` | Boolean | Mikroklima-Korrekturen anzeigen |
+| `BATTERY_CAPACITY_KWH` | Number | Batteriekapazitaet (fuer Prozent-Berechnung) |
 
-## APIs
+## Getestete Hardware
 
-| API | Zweck | Kosten |
-|-----|-------|--------|
-| [Open-Meteo](https://open-meteo.com/en/docs) | Vorhersage + Historie | Kostenlos (non-commercial), ab 100 EUR/Monat (commercial) |
-| [Ecowitt API v3](https://doc.ecowitt.net/web/#/apiv3) | Live-Stationsdaten | Kostenlos |
+| Geraet | Typ | Status |
+|--------|-----|--------|
+| Ecowitt WH2900 | Wetterstation | Getestet |
+| Growatt SPF 5000 ES | Off-Grid-Inverter | Getestet |
+
+Pull Requests mit weiteren Geraeten sind willkommen!
+
+## Mikroklima-Modell
+
+Nach ~30 Tagen Datensammlung beginnt das System, Korrekturfaktoren zu berechnen:
+
+| Korrektur | Methode | Beispiel |
+|-----------|---------|---------|
+| Temperatur-Bias | Durchschnittl. Abweichung pro Monat | "Im Winter morgens 2°C kaelter" |
+| Niederschlag | Bedingte Wahrscheinlichkeit | "Wenn Open-Meteo Regen sagt: lokal 30%" |
+| Wind-Skalierung | Verhaeltnis pro Windrichtung | "Westwind lokal 1.4x staerker" |
+
+Die Korrekturen werden im Dashboard als Badge angezeigt und verbessern sich mit mehr Daten.
 
 ## Tech-Stack
 
-- Vanilla HTML + CSS + JavaScript
-- [Chart.js 4.x](https://www.chartjs.org/) via CDN
-- Keine Dependencies, kein Build-System, kein Backend
-
-## Off-Grid-Sektion
-
-Die optionale Off-Grid-Sektion zeigt Kennzahlen, die für die Planung von autarken Energiesystemen relevant sind:
-
-| Kennzahl | Quelle | Relevanz |
-|----------|--------|----------|
-| Sonnenstunden / Tag | Open-Meteo `sunshine_duration` | Solarertrag-Schätzung |
-| Stunden Wind > 10 km/h | Open-Meteo stündliche Winddaten | Kleinwindkraft (VAWT/HAWT) |
-| Kumulative Regenprognose | Open-Meteo `precipitation_sum` | Mikro-Wasserkraft, Zisternen |
-
-Aktivieren mit `SHOW_OFFGRID: true` in `config.js`.
+| Komponente | Technologie |
+|-----------|-------------|
+| Backend | Python 3.11+, FastAPI, uvicorn |
+| Datenbank | InfluxDB 2.x |
+| Growatt-API | growattServer (PyPI) |
+| Wetter-API | Open-Meteo (kostenlos) |
+| Frontend | Vanilla HTML/CSS/JS, Chart.js 4.x |
+| Deployment | Docker Compose |
 
 ## Mitmachen
 
-Beiträge sind willkommen! Siehe [CONTRIBUTING.md](CONTRIBUTING.md).
-
-Besonders gesucht:
-
-- Tests mit anderen Ecowitt-Modellen
-- Übersetzungen (aktuell: DE, EN, ES)
-- Verbesserungen am Off-Grid-Modul
-- Barrierefreiheit (Accessibility)
+Beitraege willkommen! Siehe [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Entstehung
 
-Dieses Projekt entstand für die Off-Grid-Wetterüberwachung auf einem Grundstück in den Sierras de Córdoba, Argentinien. Der ursprüngliche Code wurde mit [Claude Code](https://docs.anthropic.com/en/docs/claude-code) generiert (Prompt in [`PROMPT.md`](PROMPT.md)).
+Entstanden fuer die Off-Grid-Wettuerueberwachung auf einem Grundstueck in den Sierras de Cordoba, Argentinien. Code generiert mit [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Prompt in [`PROMPT.md`](PROMPT.md)).
 
 ## Lizenz
 

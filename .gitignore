@@ -1,6 +1,24 @@
-# API Keys (config.js enthält Ecowitt-Keys)
-config.js
+# Credentials
 .env
+frontend/config.js
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Docker
+docker-compose.override.yml
+
+# Data
+*.csv
+import/*.csv
+import/*.json
+
+# InfluxDB
+influxdb-data/
 
 # OS
 .DS_Store

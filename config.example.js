@@ -1,36 +1,34 @@
 /**
- * Wetter Dashboard - Konfiguration
+ * Wetter Dashboard - Frontend-Konfiguration
  *
- * Kopiere diese Datei nach config.js und passe die Werte an:
- *   cp config.example.js config.js
+ * Kopiere diese Datei nach frontend/config.js:
+ *   cp config.example.js frontend/config.js
  *
- * WICHTIG: config.js niemals committen (steht in .gitignore),
- * da sie deine API-Keys enthält.
+ * WICHTIG: frontend/config.js niemals committen,
+ * da sie deine Backend-URL und Einstellungen enthaelt.
  */
 
 const CONFIG = {
 
-    // ── Station ──────────────────────────────────────────
+    // ── Station ──────────────────────────────────────
     STATION_NAME: 'Meine Wetterstation',
-    LATITUDE: -32.1559,       // negativ = Süd
-    LONGITUDE: -64.7916,      // negativ = West
-    ALTITUDE: 1000,           // Meter über Meeresspiegel
-    TIMEZONE: 'America/Argentina/Cordoba',  // IANA Timezone
 
-    // ── Ecowitt API ──────────────────────────────────────
-    // Keys generieren unter https://api.ecowitt.net
-    ECOWITT_APP_KEY: '',      // Application Key
-    ECOWITT_API_KEY: '',      // API Key
-    ECOWITT_MAC: '',          // MAC-Adresse der Station (z. B. 'AA:BB:CC:DD:EE:FF')
+    // ── Backend ──────────────────────────────────────
+    BACKEND_URL: 'http://localhost:8000/api',
 
-    // ── Anzeige ──────────────────────────────────────────
-    UNITS: 'metric',          // 'metric' (°C, km/h, mm) oder 'imperial' (°F, mph, in)
-    LANGUAGE: 'de',           // 'de', 'en', oder 'es'
-
-    // ── Verhalten ────────────────────────────────────────
+    // ── Anzeige ──────────────────────────────────────
+    UNITS: 'metric',          // 'metric' oder 'imperial'
+    LANGUAGE: 'de',           // 'de', 'en', 'es'
     REFRESH_INTERVAL: 300,    // Auto-Refresh in Sekunden (min. 60)
 
-    // ── Off-Grid-Sektion ─────────────────────────────────
-    SHOW_OFFGRID: true,       // Off-Grid-Kennzahlen anzeigen
-    WIND_THRESHOLD_KMH: 10,  // Ab welcher Windgeschwindigkeit Wind "nutzbar" ist
+    // ── Module ───────────────────────────────────────
+    SHOW_BATTERY: true,       // Batterie-Widget (braucht Growatt im Backend)
+    SHOW_OFFGRID: true,       // Off-Grid-Kennzahlen (Solar/Wind/Hydro)
+    SHOW_MICROCLIMATE: true,  // Mikroklima-Korrekturen anzeigen
+
+    // ── Energie ──────────────────────────────────────
+    BATTERY_CAPACITY_KWH: 9.6, // Gesamtkapazitaet fuer Prozent-Anzeige
+
+    // ── Off-Grid ─────────────────────────────────────
+    WIND_THRESHOLD_KMH: 10,  // Ab welcher Windgeschwindigkeit "nutzbar"
 };

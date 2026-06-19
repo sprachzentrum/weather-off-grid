@@ -56,6 +56,8 @@ GROWATT_USERNAME = _get("GROWATT_USERNAME")
 GROWATT_PASSWORD = _get("GROWATT_PASSWORD")
 GROWATT_PLANT_ID = _get("GROWATT_PLANT_ID")
 GROWATT_INVERTER_SN = _get("GROWATT_INVERTER_SN")
+# Classic ShinePhone server for off-grid storage inverters (SPF series).
+GROWATT_SERVER_URL = _get("GROWATT_SERVER_URL", "https://server.growatt.com")
 
 # ── Energy system (defaults; frontend may override per-request) ───────────
 PV_KWP = _get_float("PV_KWP", 3.6)

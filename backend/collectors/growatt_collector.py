@@ -103,24 +103,81 @@ def extract_fields(raw: dict) -> dict:
     return fields
 
 
+# The SPF 5000 ES is an off-grid storage inverter served by the classic
+# ShinePhone server, NOT the modern openapi.growatt.com endpoint (which returns
+# 403 for these accounts). We try the configured server first, then known
+# ShinePhone hosts, and identify as the ShinePhone app.
+GROWATT_AGENT = "ShinePhone/8.1.8.6"
+DEFAULT_GROWATT_SERVERS = [
+    "https://server.growatt.com",
+    "https://server-api.growatt.com",
+]
+
+
+def _make_api(server_url: str):
+    """Build a GrowattApi pinned to a specific server with the ShinePhone agent.
+
+    Handles growattServer version differences: agent_identifier may or may not be
+    a constructor argument, and server_url is set via the attribute used for all
+    request URLs (with the trailing slash the library expects).
+    """
+    import growattServer
+
+    try:
+        api = growattServer.GrowattApi(add_random_user_id=True, agent_identifier=GROWATT_AGENT)
+    except TypeError:
+        # Older lib without agent_identifier kwarg - set the UA on the session.
+        api = growattServer.GrowattApi(add_random_user_id=True)
+        try:
+            api.session.headers.update({"User-Agent": GROWATT_AGENT})
+        except Exception:  # noqa: BLE001
+            pass
+    api.server_url = server_url.rstrip("/") + "/"
+    return api
+
+
+def _server_candidates(creds: dict) -> list[str]:
+    """Configured server first (if any), then the known ShinePhone fallbacks."""
+    out: list[str] = []
+    for url in [creds.get("server_url"), *DEFAULT_GROWATT_SERVERS]:
+        if url and url.rstrip("/") not in [u.rstrip("/") for u in out]:
+            out.append(url)
+    return out
+
+
 class GrowattSession:
     """Holds a logged-in growattServer client and the resolved plant/inverter ids."""
 
     def __init__(self, creds: dict) -> None:
         self.api = None
         self.creds = creds
+        self.server_url: str | None = None
         self.plant_id: str | None = creds.get("plant_id") or None
         self.inverter_sn: str | None = creds.get("inverter_sn") or None
 
     def login(self) -> None:
-        import growattServer  # imported lazily so the lib is optional
+        # Try each candidate server in turn; a 403/HTTP error means "wrong server
+        # for this account", so fall through to the next one.
+        last_exc: Exception | None = None
+        result = None
+        for url in _server_candidates(self.creds):
+            try:
+                api = _make_api(url)
+                result = api.login(self.creds.get("username"), self.creds.get("password"))
+                if not result or not result.get("success", True):
+                    raise RuntimeError(f"login rejected: {result}")
+                self.api = api
+                self.server_url = url
+                log.info("growatt login OK via %s", url)
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                self.api = None
+                log.warning("growatt login via %s failed: %s", url, exc)
+        if self.api is None:
+            raise RuntimeError(f"growatt login failed on all servers: {last_exc}")
 
-        self.api = growattServer.GrowattApi(add_random_user_id=True)
-        result = self.api.login(self.creds.get("username"), self.creds.get("password"))
-        if not result or not result.get("success", True):
-            raise RuntimeError(f"growatt login failed: {result}")
-
-        # Resolve plant + inverter if the user did not pin them in .env.
+        # Resolve plant + inverter if the user did not pin them in settings.
         if not self.plant_id:
             plants = self.api.plant_list(result.get("user", {}).get("id", ""))
             data = plants.get("data") if isinstance(plants, dict) else plants

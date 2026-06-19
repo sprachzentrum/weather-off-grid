@@ -65,6 +65,7 @@ def _default_site_from_env() -> dict:
             "password": config.GROWATT_PASSWORD,
             "plant_id": config.GROWATT_PLANT_ID,
             "inverter_sn": config.GROWATT_INVERTER_SN,
+            "server_url": config.GROWATT_SERVER_URL,
         },
         "pv_kwp": config.PV_KWP,
         "pv_efficiency": config.PV_EFFICIENCY,
@@ -91,7 +92,8 @@ def _normalise_site(site: dict, existing: dict | None = None) -> dict:
     base = existing or {
         "ecowitt": {"enabled": False, "app_key": "", "api_key": "", "mac": ""},
         "growatt": {"enabled": False, "username": "", "password": "",
-                    "plant_id": "", "inverter_sn": ""},
+                    "plant_id": "", "inverter_sn": "",
+                    "server_url": "https://server.growatt.com"},
         "pv_kwp": 3.6, "pv_efficiency": 0.75, "battery_capacity_kwh": 9.6,
         "wind_threshold_kmh": 10, "altitude": 0, "timezone": "UTC",
         "latitude": 0.0, "longitude": 0.0,

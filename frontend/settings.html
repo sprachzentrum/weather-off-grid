@@ -130,7 +130,9 @@
       <div class="field"><label>Passwort</label><input id="f-gw-pass" type="password" placeholder="•••••• (leer = unverändert)"></div>
       <div class="field"><label>Plant ID</label><input id="f-gw-plant"></div>
       <div class="field"><label>Inverter SN</label><input id="f-gw-sn"></div>
+      <div class="field"><label>Server-URL</label><input id="f-gw-server" placeholder="https://server.growatt.com"></div>
     </div>
+    <p class="muted" style="margin:-2px 0 8px">SPF-Off-Grid-Inverter brauchen <code>https://server.growatt.com</code>. Bei 403 alternativ <code>https://server-api.growatt.com</code>.</p>
     <div class="btn-row"><button class="ghost" data-test="growatt">Verbindung testen</button><span class="test-status" data-status="growatt"></span></div>
   </div>
 
@@ -190,7 +192,7 @@ function toast(msg,type="ok"){ const el=$("toast"); el.textContent=msg; el.class
 
 function blankSite(){ return {site_id:null,name:"Neuer Standort",latitude:0,longitude:0,altitude:0,timezone:"UTC",
   ecowitt:{enabled:false,app_key:"",api_key:"",mac:""},
-  growatt:{enabled:false,username:"",password:"",plant_id:"",inverter_sn:""},
+  growatt:{enabled:false,username:"",password:"",plant_id:"",inverter_sn:"",server_url:"https://server.growatt.com"},
   pv_kwp:3.6,pv_efficiency:0.75,battery_capacity_kwh:9.6,wind_threshold_kmh:10}; }
 
 /* ── boot ── */
@@ -271,6 +273,7 @@ function wizFields(kind){
     <div class="field"><label>Passwort</label><input id="w-gw-pass" type="password" value=""></div>
     <div class="grid2"><div class="field"><label>Plant ID</label><input id="w-gw-plant" value="${s.growatt.plant_id||""}"></div>
     <div class="field"><label>Inverter SN</label><input id="w-gw-sn" value="${s.growatt.inverter_sn||""}"></div></div>
+    <div class="field"><label>Server-URL</label><input id="w-gw-server" value="${s.growatt.server_url||"https://server.growatt.com"}"></div>
     <div class="btn-row"><button class="ghost" data-test="growatt" type="button">Testen</button><span class="test-status" data-status="growatt"></span></div>`;
   return `
     <div class="field"><label>Stationsname</label><input id="w-name" value="${s.name||""}"></div>
@@ -284,7 +287,7 @@ function wizCollect(kind){
   const s=WSITE, v=id=>{const e=$(id);return e?e.value:undefined;};
   if(kind==="location"){ s.latitude=parseFloat(v("w-lat"))||0; s.longitude=parseFloat(v("w-lng"))||0; s.altitude=parseFloat(v("w-alt"))||0; s.timezone=v("w-tz")||"UTC"; }
   if(kind==="ecowitt"){ s.ecowitt={enabled:$("w-eco-en").checked,app_key:v("w-eco-app"),api_key:v("w-eco-api"),mac:v("w-eco-mac")}; }
-  if(kind==="growatt"){ s.growatt={enabled:$("w-gw-en").checked,username:v("w-gw-user"),password:v("w-gw-pass"),plant_id:v("w-gw-plant"),inverter_sn:v("w-gw-sn")}; }
+  if(kind==="growatt"){ s.growatt={enabled:$("w-gw-en").checked,username:v("w-gw-user"),password:v("w-gw-pass"),plant_id:v("w-gw-plant"),inverter_sn:v("w-gw-sn"),server_url:v("w-gw-server")||"https://server.growatt.com"}; }
   if(kind==="energy"){ s.name=v("w-name")||"Standort"; s.pv_kwp=parseFloat(v("w-pv"))||0; s.pv_efficiency=parseFloat(v("w-eff"))||0.75; s.battery_capacity_kwh=parseFloat(v("w-cap"))||0; s.wind_threshold_kmh=parseFloat(v("w-wind"))||10; }
 }
 $("wiz-next").onclick = async ()=>{
@@ -319,7 +322,7 @@ function loadSiteIntoForm(){
   $("f-alt").value=s.altitude??0; $("f-tz").value=s.timezone||"";
   const e=s.ecowitt||{}; $("f-eco-en").checked=!!e.enabled; $("f-eco-app").value=e.app_key||""; $("f-eco-api").value=e.api_key||""; $("f-eco-mac").value=e.mac||"";
   const g=s.growatt||{}; $("f-gw-en").checked=!!g.enabled; $("f-gw-user").value=g.username||""; $("f-gw-pass").value=""; $("f-gw-pass").placeholder=(g.password==="********")?"•••••• (unverändert)":"";
-  $("f-gw-plant").value=g.plant_id||""; $("f-gw-sn").value=g.inverter_sn||"";
+  $("f-gw-plant").value=g.plant_id||""; $("f-gw-sn").value=g.inverter_sn||""; $("f-gw-server").value=g.server_url||"https://server.growatt.com";
   $("f-pv").value=s.pv_kwp??3.6; $("f-eff").value=s.pv_efficiency??0.75; $("f-cap").value=s.battery_capacity_kwh??9.6; $("f-wind").value=s.wind_threshold_kmh??10;
   document.querySelectorAll("[data-status]").forEach(el=>el.textContent="");
 }
@@ -329,7 +332,7 @@ function collectForm(){
   s.altitude=parseFloat($("f-alt").value)||0; s.timezone=$("f-tz").value||"UTC";
   s.ecowitt={enabled:$("f-eco-en").checked,app_key:$("f-eco-app").value,api_key:$("f-eco-api").value,mac:$("f-eco-mac").value};
   const pass=$("f-gw-pass").value;  // empty = keep existing (backend handles)
-  s.growatt={enabled:$("f-gw-en").checked,username:$("f-gw-user").value,password:pass,plant_id:$("f-gw-plant").value,inverter_sn:$("f-gw-sn").value};
+  s.growatt={enabled:$("f-gw-en").checked,username:$("f-gw-user").value,password:pass,plant_id:$("f-gw-plant").value,inverter_sn:$("f-gw-sn").value,server_url:$("f-gw-server").value||"https://server.growatt.com"};
   s.pv_kwp=parseFloat($("f-pv").value)||0; s.pv_efficiency=parseFloat($("f-eff").value)||0.75;
   s.battery_capacity_kwh=parseFloat($("f-cap").value)||0; s.wind_threshold_kmh=parseFloat($("f-wind").value)||10;
 }

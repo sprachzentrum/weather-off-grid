@@ -1,4 +1,5 @@
-version: '3.8'
+# Weather Off-Grid - InfluxDB + FastAPI backend.
+# Copy config.example.env to .env and fill in your values before `docker compose up`.
 
 services:
   influxdb:
@@ -10,11 +11,18 @@ services:
       - influxdb-data:/var/lib/influxdb2
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=change-me-secure-password
-      - DOCKER_INFLUXDB_INIT_ORG=wetter
-      - DOCKER_INFLUXDB_INIT_BUCKET=weather
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_USERNAME:-admin}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_PASSWORD:-change-me-secure-password}
+      # Org and the first bucket MUST match the values the backend reads from .env.
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-offgrid}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET_WEATHER:-weather}
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
 
   backend:
@@ -25,8 +33,10 @@ services:
     env_file:
       - .env
     depends_on:
-      - influxdb
+      influxdb:
+        condition: service_healthy
     volumes:
+      # Historical-import CSVs and the frontend (served as static files at /app).
       - ./import:/app/import
       - ./frontend:/app/static
     restart: unless-stopped

@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#00d4aa">
+<title>Weather Off-Grid</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- User config (copied from config.example.js). Loaded BEFORE the app script so
+     CONFIG exists; a missing file simply leaves CONFIG undefined -> setup screen. -->
+<script src="config.js"></script>
+<style>
+  :root{
+    --bg:#0f0f1a; --card:#1a1a2e; --card-2:#222241; --line:#2c2c4a;
+    --txt:#e8e8f5; --dim:#9a9ac4; --accent:#00d4aa;
+    --good:#00d4aa; --warn:#f4a261; --bad:#e63946; --blue:#4895ef;
+    --radius:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);line-height:1.45;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:16px;max-width:1400px;margin:0 auto;
+    padding-bottom:max(16px,env(safe-area-inset-bottom))}
+  a{color:var(--accent)}
+  h2{font-size:1.05rem;font-weight:600;margin:0 4px 12px;display:flex;align-items:center;gap:8px}
+  h2 .pill{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+    padding:3px 8px;border-radius:999px;background:var(--card-2);color:var(--dim)}
+  h2 .pill.live{background:rgba(0,212,170,.16);color:var(--accent)}
+  section{margin-bottom:26px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+  .grid{display:grid;gap:12px}
+
+  /* Header */
+  header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;padding:4px 4px 18px}
+  .title h1{font-size:clamp(1.3rem,4vw,1.9rem);font-weight:700}
+  .title .sub{color:var(--dim);font-size:.82rem;margin-top:2px}
+  .sun{display:flex;gap:18px;color:var(--dim);font-size:.85rem}
+  .sun b{color:var(--txt);font-weight:600;display:block}
+
+  .banner{padding:10px 14px;border-radius:12px;margin-bottom:14px;font-size:.86rem;display:none}
+  .banner.show{display:block}
+  .banner.warn{background:rgba(244,162,97,.12);border:1px solid rgba(244,162,97,.4);color:var(--warn)}
+  .banner.err{background:rgba(230,57,70,.12);border:1px solid rgba(230,57,70,.4);color:var(--bad)}
+
+  /* Battery widget */
+  .battery-wrap{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .bat-visual{position:relative;width:74px;height:130px;flex:0 0 auto}
+  .bat-body{position:absolute;inset:0;border:3px solid var(--line);border-radius:12px;overflow:hidden;background:var(--bg)}
+  .bat-cap{position:absolute;top:-9px;left:50%;transform:translateX(-50%);width:30px;height:7px;
+    background:var(--line);border-radius:3px 3px 0 0}
+  .bat-fill{position:absolute;left:0;right:0;bottom:0;transition:height .8s ease,background .4s;border-radius:0 0 9px 9px}
+  .bat-soc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:1.4rem;font-weight:800;text-shadow:0 1px 4px rgba(0,0,0,.7)}
+  .bat-stats{flex:1;min-width:180px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+  .stat .k{font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;color:var(--dim)}
+  .stat .v{font-size:1.25rem;font-weight:700;margin-top:2px}
+  .stat .v small{font-size:.8rem;color:var(--dim);font-weight:500}
+  .flow{font-size:.85rem;font-weight:600}
+  .flow.charge{color:var(--good)} .flow.discharge{color:var(--warn)}
+
+  /* Current weather grid */
+  .cur-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .metric .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);display:flex;gap:6px}
+  .metric .val{font-size:1.5rem;font-weight:700;margin-top:6px;line-height:1}
+  .metric .val small{font-size:.8rem;font-weight:500;color:var(--dim)}
+  .metric .extra{font-size:.76rem;color:var(--dim);margin-top:6px}
+  .hero{grid-column:span 2;background:linear-gradient(135deg,var(--card-2),var(--card));display:flex;align-items:center;gap:16px}
+  .hero .ico{font-size:3rem}.hero .big{font-size:2.6rem;font-weight:800;line-height:1}
+  .hero .desc{color:var(--dim);font-size:.82rem;margin-top:4px}
+  .wind-row{display:flex;align-items:center;gap:14px}
+  .compass{position:relative;width:60px;height:60px;border-radius:50%;border:2px solid var(--line);flex:0 0 auto}
+  .compass .n{position:absolute;top:1px;left:50%;transform:translateX(-50%);font-size:.55rem;color:var(--dim)}
+  .compass .needle{position:absolute;top:50%;left:50%;width:3px;height:24px;background:var(--accent);
+    transform-origin:bottom center;border-radius:2px;transition:transform .6s ease}
+  .compass .needle::after{content:"";position:absolute;top:-4px;left:50%;transform:translateX(-50%);
+    border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--accent)}
+
+  /* horizontal scrollers */
+  .scroll{display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;scroll-snap-type:x proximity}
+  .scroll::-webkit-scrollbar{height:6px}.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+  .day-card{flex:0 0 auto;width:128px;text-align:center;scroll-snap-align:start}
+  .day-card .dow{font-weight:600}.day-card .date{font-size:.7rem;color:var(--dim);margin-bottom:4px}
+  .day-card .ico{font-size:2.1rem;margin:2px 0}
+  .day-card .tmax{font-weight:700;font-size:1.05rem}.day-card .tmin{color:var(--dim);font-size:.9rem}
+  .day-card .det{font-size:.72rem;color:var(--dim);margin-top:7px;display:flex;flex-direction:column;gap:2px}
+  .day-card .det b{color:var(--txt)}
+  .badge{display:inline-block;margin-top:6px;font-size:.66rem;font-weight:600;padding:2px 7px;border-radius:999px;
+    background:rgba(72,149,239,.18);color:var(--blue)}
+  .badge.temp{background:rgba(244,162,97,.18);color:var(--warn)}
+  .hour-card{flex:0 0 auto;width:74px;text-align:center;padding:12px 6px}
+  .hour-card .hh{font-size:.74rem;color:var(--dim)}.hour-card .ico{font-size:1.4rem;margin:3px 0}
+  .hour-card .t{font-weight:700}.hour-card .p{font-size:.7rem;color:var(--blue);margin-top:2px}
+
+  /* charts */
+  .charts{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .chart-card h3{font-size:.86rem;font-weight:600;margin-bottom:10px;color:var(--dim)}
+  .chart-wrap{position:relative;height:200px}
+
+  /* offgrid */
+  .og-grid{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+  .og-card .head{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:12px}
+  .og-card .head .e{font-size:1.3rem}
+  .og-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:7px 0;border-bottom:1px solid var(--line);font-size:.84rem}
+  .og-row:last-child{border-bottom:none}.og-row .d{color:var(--dim)}.og-row .v{font-weight:600;white-space:nowrap}
+  .bar{height:6px;border-radius:3px;background:var(--card-2);overflow:hidden;flex:1;min-width:50px}
+  .bar i{display:block;height:100%;border-radius:3px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+  .dot.good{background:var(--good)}.dot.fair{background:var(--warn)}.dot.poor{background:var(--bad)}
+
+  /* microclimate */
+  .mc-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+  .mc-card{text-align:center}.mc-card .v{font-size:1.8rem;font-weight:800;color:var(--accent)}
+  .mc-card .k{font-size:.75rem;color:var(--dim);margin-top:4px}
+  .progress{height:8px;border-radius:4px;background:var(--card-2);overflow:hidden;margin-top:10px}
+  .progress i{display:block;height:100%;background:var(--accent)}
+
+  footer{text-align:center;color:var(--dim);font-size:.76rem;padding:14px 0 30px}
+  .skeleton{color:var(--dim);font-style:italic;padding:8px 4px}
+  .hidden{display:none!important}
+
+  /* setup overlay */
+  #setup{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
+  #setup .box{max-width:560px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:24px}
+  #setup h2{font-size:1.3rem}#setup code{background:var(--bg);padding:2px 6px;border-radius:6px;color:var(--accent)}
+  #setup pre{background:var(--bg);padding:14px;border-radius:10px;overflow-x:auto;font-size:.8rem;margin:12px 0}
+
+  @media (max-width:480px){.cur-grid{grid-template-columns:repeat(2,1fr)}.hero{grid-column:span 2}}
+</style>
+</head>
+<body>
+
+<!-- Setup overlay shown when config.js / CONFIG is missing -->
+<div id="setup" class="hidden">
+  <div class="box">
+    <h2>⚙️ <span data-i18n="setup_title">Einrichtung nötig</span></h2>
+    <p style="color:var(--dim);margin-top:10px" data-i18n="setup_intro">
+      Es wurde keine <code>config.js</code> gefunden. Kopiere die Beispiel-Datei und trage deine Backend-URL ein:</p>
+    <pre>cp config.example.js frontend/config.js</pre>
+    <p style="color:var(--dim)" data-i18n="setup_edit">Dann <code>frontend/config.js</code> bearbeiten:</p>
+    <pre>const CONFIG = {
+  STATION_NAME: 'Wetter El Durazno',
+  BACKEND_URL: 'https://weather.example.com/api',
+  LANGUAGE: 'de',
+  PV_KWP: 3.6,
+  BATTERY_CAPACITY_KWH: 9.6,
+};</pre>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="title">
+      <h1 id="station-name">Weather Off-Grid</h1>
+      <div class="sub" id="location-sub"></div>
+    </div>
+    <div class="sun">
+      <div>🌅 <span data-i18n="sunrise">Aufgang</span><b id="sunrise">–</b></div>
+      <div>🌇 <span data-i18n="sunset">Untergang</span><b id="sunset">–</b></div>
+      <div>🕓 <span data-i18n="updated">Stand</span><b id="updated">–</b></div>
+    </div>
+  </header>
+
+  <div id="banner" class="banner"></div>
+
+  <!-- 2. Battery -->
+  <section id="sec-battery">
+    <h2>🔋 <span data-i18n="battery">Batterie</span> <span class="pill live" id="battery-pill" data-i18n="energy">Energie</span></h2>
+    <div class="card battery-wrap" id="battery">
+      <div class="skeleton" data-i18n="loading">Lade …</div>
+    </div>
+  </section>
+
+  <!-- 3. Current weather -->
+  <section>
+    <h2 data-i18n="current_weather">Aktuelles Wetter <span class="pill" id="cur-src">…</span></h2>
+    <div class="grid cur-grid" id="current"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- 4. 7-day forecast -->
+  <section>
+    <h2 data-i18n="forecast_7d">7-Tage-Vorhersage <span class="pill" id="mc-pill"></span></h2>
+    <div class="scroll" id="daily"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- 5. Hourly -->
+  <section>
+    <h2 data-i18n="next_24h">Nächste 24 Stunden</h2>
+    <div class="scroll" id="hourly"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- 6. Charts -->
+  <section>
+    <h2 data-i18n="charts">Verlauf &amp; Prognose</h2>
+    <div class="grid charts">
+      <div class="card chart-card"><h3 data-i18n="ch_temp">Temperatur (°C)</h3><div class="chart-wrap"><canvas id="chTemp"></canvas></div></div>
+      <div class="card chart-card"><h3 data-i18n="ch_wind">Wind &amp; Böen (km/h)</h3><div class="chart-wrap"><canvas id="chWind"></canvas></div></div>
+      <div class="card chart-card"><h3 data-i18n="ch_rain">Niederschlag (mm)</h3><div class="chart-wrap"><canvas id="chRain"></canvas></div></div>
+      <div class="card chart-card"><h3 data-i18n="ch_press">Luftdruck (hPa)</h3><div class="chart-wrap"><canvas id="chPress"></canvas></div></div>
+      <div class="card chart-card" id="cc-soc"><h3 data-i18n="ch_soc">Batterie SOC (%)</h3><div class="chart-wrap"><canvas id="chSoc"></canvas></div></div>
+      <div class="card chart-card" id="cc-pv"><h3 data-i18n="ch_pv">PV-Leistung (W)</h3><div class="chart-wrap"><canvas id="chPv"></canvas></div></div>
+    </div>
+  </section>
+
+  <!-- 7. Off-grid -->
+  <section id="sec-offgrid">
+    <h2 data-i18n="offgrid">Off-Grid <span class="pill" data-i18n="psh_note">PSH</span></h2>
+    <div class="grid og-grid" id="offgrid"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- 8. Microclimate -->
+  <section id="sec-microclimate">
+    <h2 data-i18n="microclimate">Mikroklima-Lernfortschritt</h2>
+    <div class="card" id="microclimate"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <footer>
+    Weather Off-Grid · <span data-i18n="data_src">Daten</span>: Open-Meteo, Ecowitt, Growatt ·
+    <span id="auto-note"></span>
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   i18n
+   ============================================================ */
+const I18N = {
+  de:{loading:"Lade …",sunrise:"Aufgang",sunset:"Untergang",updated:"Stand",battery:"Batterie",energy:"Energie",
+    current_weather:"Aktuelles Wetter",forecast_7d:"7-Tage-Vorhersage",next_24h:"Nächste 24 Stunden",
+    charts:"Verlauf & Prognose",ch_temp:"Temperatur (°C)",ch_wind:"Wind & Böen (km/h)",ch_rain:"Niederschlag (mm)",
+    ch_press:"Luftdruck (hPa)",ch_soc:"Batterie SOC (%)",ch_pv:"PV-Leistung (W)",offgrid:"Off-Grid",
+    microclimate:"Mikroklima-Lernfortschritt",data_src:"Daten",charge:"Laden",discharge:"Entladen",idle:"Ruhe",
+    pv:"PV",load:"Last",soc:"Ladestand",today_pv:"PV heute",today_load:"Verbrauch heute",
+    feels:"gefühlt",humidity:"Luftfeuchte",dewpoint:"Taupunkt",wind:"Wind",gust:"Böen",pressure:"Luftdruck",
+    solar:"Solar",uv:"UV-Index",rain:"Regen",rain_today:"Heute",rate:"Rate",
+    solar_yield:"Solarertrag (PSH)",wind_potential:"Wind-Potenzial",rain_hydro:"Regen / Hydro",energy_balance:"Energiebilanz",
+    psh_hours:"Sonnenstunden",est_yield:"geschätzt",prod_window:"Produktionsfenster",
+    wind_hours:"Std > {n} km/h",cumulative_rain:"7-Tage-Summe",autonomy:"Autonomie",hours:"Std",
+    hit_rate:"Treffer Regen",temp_dev:"Ø Temp-Abweichung",wind_corr:"Wind-Korrektur",days_data:"Tage Daten",
+    learning:"Lernphase",mc_learning:"Sammelt Daten … {n}/{m} Tage bis zur Aktivierung",
+    setup_title:"Einrichtung nötig",no_conn:"Keine Verbindung zum Backend – zeige zuletzt gespeicherte Daten.",
+    offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)"},
+  en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
+    current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
+    charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
+    ch_press:"Pressure (hPa)",ch_soc:"Battery SOC (%)",ch_pv:"PV power (W)",offgrid:"Off-grid",
+    microclimate:"Microclimate learning",data_src:"Data",charge:"Charging",discharge:"Discharging",idle:"Idle",
+    pv:"PV",load:"Load",soc:"State of charge",today_pv:"PV today",today_load:"Load today",
+    feels:"feels like",humidity:"Humidity",dewpoint:"Dew point",wind:"Wind",gust:"Gusts",pressure:"Pressure",
+    solar:"Solar",uv:"UV index",rain:"Rain",rain_today:"Today",rate:"Rate",
+    solar_yield:"Solar yield (PSH)",wind_potential:"Wind potential",rain_hydro:"Rain / Hydro",energy_balance:"Energy balance",
+    psh_hours:"Peak sun hours",est_yield:"estimated",prod_window:"Production window",
+    wind_hours:"hrs > {n} km/h",cumulative_rain:"7-day total",autonomy:"Autonomy",hours:"hrs",
+    hit_rate:"Rain hit rate",temp_dev:"Avg temp deviation",wind_corr:"Wind correction",days_data:"Days of data",
+    learning:"Learning",mc_learning:"Collecting data … {n}/{m} days until activation",
+    setup_title:"Setup required",no_conn:"No backend connection – showing last saved data.",
+    offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)"},
+  es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
+    current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
+    charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
+    ch_press:"Presión (hPa)",ch_soc:"SOC batería (%)",ch_pv:"Potencia FV (W)",offgrid:"Off-grid",
+    microclimate:"Aprendizaje microclima",data_src:"Datos",charge:"Cargando",discharge:"Descargando",idle:"Reposo",
+    pv:"FV",load:"Carga",soc:"Estado de carga",today_pv:"FV hoy",today_load:"Consumo hoy",
+    feels:"sensación",humidity:"Humedad",dewpoint:"Punto rocío",wind:"Viento",gust:"Ráfagas",pressure:"Presión",
+    solar:"Solar",uv:"Índice UV",rain:"Lluvia",rain_today:"Hoy",rate:"Tasa",
+    solar_yield:"Rendimiento solar (PSH)",wind_potential:"Potencial eólico",rain_hydro:"Lluvia / Hidro",energy_balance:"Balance energético",
+    psh_hours:"Horas sol pico",est_yield:"estimado",prod_window:"Ventana producción",
+    wind_hours:"hrs > {n} km/h",cumulative_rain:"Total 7 días",autonomy:"Autonomía",hours:"hrs",
+    hit_rate:"Acierto lluvia",temp_dev:"Desv. temp media",wind_corr:"Corrección viento",days_data:"Días de datos",
+    learning:"Aprendiendo",mc_learning:"Recopilando datos … {n}/{m} días hasta activar",
+    setup_title:"Configuración necesaria",no_conn:"Sin conexión al backend – mostrando últimos datos.",
+    offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)"}
+};
+let LANG = "de";
+const t = (k, vars={}) => {
+  let s = (I18N[LANG] && I18N[LANG][k]) || (I18N.de[k]) || k;
+  for(const [key,val] of Object.entries(vars)) s = s.replace(`{${key}}`, val);
+  return s;
+};
+
+/* ============================================================
+   Config + bootstrap
+   ============================================================ */
+if (typeof CONFIG === "undefined"){
+  document.getElementById("setup").classList.remove("hidden");
+  throw new Error("CONFIG missing");
+}
+LANG = ["de","en","es"].includes(CONFIG.LANGUAGE) ? CONFIG.LANGUAGE : "de";
+document.documentElement.lang = LANG;
+document.getElementById("app").classList.remove("hidden");
+const API = (CONFIG.BACKEND_URL || "").replace(/\/$/, "");
+const REFRESH = Math.max(60, CONFIG.REFRESH_INTERVAL || 300);
+const $ = id => document.getElementById(id);
+const fmt = (v,d=1) => (v===null||v===undefined||v==="") ? "–" : (+v).toFixed(d).replace(".",",");
+const fmt0 = v => fmt(v,0);
+
+// apply static i18n on data-i18n nodes (preserve child elements like pills)
+document.querySelectorAll("[data-i18n]").forEach(el=>{
+  const k = el.getAttribute("data-i18n");
+  const s = I18N[LANG] && I18N[LANG][k];
+  if(!s) return;
+  if(el.childElementCount === 0){
+    el.textContent = s;
+  } else {
+    const textNode = Array.from(el.childNodes).find(n=>n.nodeType===3 && n.textContent.trim());
+    if(textNode) textNode.textContent = s+" ";
+    else el.insertBefore(document.createTextNode(s+" "), el.firstChild);
+  }
+});
+$("station-name").textContent = CONFIG.STATION_NAME || "Weather Off-Grid";
+$("auto-note").textContent = t("auto_refresh",{n:Math.round(REFRESH/60)});
+if(CONFIG.SHOW_BATTERY===false) $("sec-battery").classList.add("hidden");
+if(CONFIG.SHOW_OFFGRID===false) $("sec-offgrid").classList.add("hidden");
+if(CONFIG.SHOW_MICROCLIMATE===false) $("sec-microclimate").classList.add("hidden");
+
+/* ============================================================
+   Fetch helper with localStorage offline cache
+   ============================================================ */
+async function api(path){
+  const url = API + path;
+  try{
+    const r = await fetch(url, {cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const data = await r.json();
+    localStorage.setItem("wog:"+path, JSON.stringify({t:Date.now(),data}));
+    return {data, cached:false};
+  }catch(e){
+    const c = localStorage.getItem("wog:"+path);
+    if(c){ const o=JSON.parse(c); return {data:o.data, cached:true, age:o.t}; }
+    throw e;
+  }
+}
+
+/* ============================================================
+   WMO weather codes -> emoji + description
+   ============================================================ */
+const WMO_DESC = {
+  0:{de:"Klar",en:"Clear",es:"Despejado"},1:{de:"Heiter",en:"Mainly clear",es:"Mayorm. despejado"},
+  2:{de:"Teils bewölkt",en:"Partly cloudy",es:"Parc. nublado"},3:{de:"Bedeckt",en:"Overcast",es:"Nublado"},
+  45:{de:"Nebel",en:"Fog",es:"Niebla"},48:{de:"Reifnebel",en:"Rime fog",es:"Niebla escarcha"},
+  51:{de:"Niesel",en:"Drizzle",es:"Llovizna"},53:{de:"Niesel",en:"Drizzle",es:"Llovizna"},55:{de:"Starker Niesel",en:"Dense drizzle",es:"Llovizna densa"},
+  61:{de:"Regen",en:"Rain",es:"Lluvia"},63:{de:"Regen",en:"Rain",es:"Lluvia"},65:{de:"Starker Regen",en:"Heavy rain",es:"Lluvia fuerte"},
+  71:{de:"Schnee",en:"Snow",es:"Nieve"},73:{de:"Schnee",en:"Snow",es:"Nieve"},75:{de:"Starker Schnee",en:"Heavy snow",es:"Nieve fuerte"},
+  80:{de:"Schauer",en:"Showers",es:"Chubascos"},81:{de:"Schauer",en:"Showers",es:"Chubascos"},82:{de:"Heftige Schauer",en:"Violent showers",es:"Chubascos fuertes"},
+  95:{de:"Gewitter",en:"Thunderstorm",es:"Tormenta"},96:{de:"Gewitter, Hagel",en:"Thunderstorm, hail",es:"Tormenta, granizo"},99:{de:"Schweres Gewitter",en:"Severe storm",es:"Tormenta severa"}
+};
+function wmo(code, isDay=true){
+  const map={0:isDay?"☀️":"🌙",1:isDay?"🌤️":"🌙",2:"⛅",3:"☁️",45:"🌫️",48:"🌫️",
+    51:"🌦️",53:"🌦️",55:"🌧️",61:"🌦️",63:"🌧️",65:"🌧️",71:"🌨️",73:"🌨️",75:"❄️",
+    80:"🌦️",81:"🌧️",82:"⛈️",95:"⛈️",96:"⛈️",99:"⛈️"};
+  const d = WMO_DESC[code] || {de:"—",en:"—",es:"—"};
+  return {ico: map[code]||"❓", desc: d[LANG]||d.de};
+}
+const WIND_DIRS=["N","NO","O","SO","S","SW","W","NW"];
+const windDir = deg => deg===null||deg===undefined?"":WIND_DIRS[Math.round(deg/45)%8];
+const weekday = iso => new Date(iso+"T12:00").toLocaleDateString(LANG,{weekday:"short"});
+const hhmm = iso => { const d=new Date(iso); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); };
+
+/* ============================================================
+   Renderers
+   ============================================================ */
+function renderBattery(cur){
+  const b = cur.battery;
+  if(!b){ $("battery").innerHTML = `<div class="skeleton">${t("no_battery")}</div>`; return; }
+  const soc = b.battery_soc ?? 0;
+  const color = soc>50?"var(--good)":soc>20?"var(--warn)":"var(--bad)";
+  const power = b.battery_power ?? 0;
+  let flow = `<span class="flow idle">${t("idle")}</span>`;
+  if(power>10) flow = `<span class="flow charge">▲ ${t("charge")} ${fmt(Math.abs(power)/1000,2)} kW</span>`;
+  else if(power<-10) flow = `<span class="flow discharge">▼ ${t("discharge")} ${fmt(Math.abs(power)/1000,2)} kW</span>`;
+  $("battery").innerHTML = `
+    <div class="bat-visual">
+      <div class="bat-cap"></div>
+      <div class="bat-body">
+        <div class="bat-fill" style="height:${Math.max(3,Math.min(100,soc))}%;background:${color}"></div>
+        <div class="bat-soc">${fmt0(soc)}%</div>
+      </div>
+    </div>
+    <div class="bat-stats">
+      <div class="stat"><div class="k">${t("soc")}</div><div class="v" style="color:${color}">${fmt0(soc)}<small> %</small></div><div>${flow}</div></div>
+      <div class="stat"><div class="k">☀️ ${t("pv")}</div><div class="v">${fmt0(b.pv_power)}<small> W</small></div></div>
+      <div class="stat"><div class="k">🏠 ${t("load")}</div><div class="v">${fmt0(b.load_power)}<small> W</small></div></div>
+    </div>`;
+}
+
+function renderCurrent(cur){
+  const w = cur.weather || {};
+  const {ico,desc} = wmo(cur.weather_code ?? 1, cur.is_day !== 0);
+  $("cur-src").textContent = w.source==="station" ? "● LIVE" : "Open-Meteo";
+  $("cur-src").className = "pill" + (w.source==="station"?" live":"");
+  const wd = w.wind_direction;
+  const compass = (wd===null||wd===undefined)?"":`<div class="compass"><span class="n">N</span>
+    <div class="needle" style="transform:translate(-50%,-100%) rotate(${wd}deg)"></div></div>`;
+  const cell=(lbl,val,unit,extra="")=>`<div class="card metric"><div class="lbl">${lbl}</div>
+    <div class="val">${val}<small> ${unit}</small></div>${extra?`<div class="extra">${extra}</div>`:""}</div>`;
+  $("current").innerHTML = `
+    <div class="card hero"><div class="ico">${ico}</div><div>
+      <div class="big">${fmt(w.temperature_outdoor)}°</div>
+      <div class="desc">${desc} · ${t("feels")} ${fmt(w.temperature_feels_like)}°</div></div></div>
+    ${cell("💧 "+t("humidity"),fmt0(w.humidity_outdoor),"%",w.dewpoint!=null?t("dewpoint")+" "+fmt(w.dewpoint)+"°":"")}
+    <div class="card metric"><div class="lbl">🌬️ ${t("wind")}</div><div class="wind-row"><div>
+      <div class="val">${fmt(w.wind_speed)}<small> km/h</small></div>
+      <div class="extra">${t("gust")} ${fmt(w.wind_gust)} · ${windDir(wd)} ${wd!=null?fmt0(wd)+"°":""}</div></div>${compass}</div></div>
+    ${cell("📊 "+t("pressure"),fmt0(w.pressure_relative),"hPa")}
+    ${cell("☀️ "+t("solar"),w.solar_radiation!=null?fmt0(w.solar_radiation):"–","W/m²",w.uv_index!=null?t("uv")+" "+fmt(w.uv_index):"")}
+    ${cell("🌧️ "+t("rain"),fmt(w.rain_rate),"mm/h",w.rain_daily!=null?t("rain_today")+" "+fmt(w.rain_daily)+" mm":"")}`;
+}
+
+function renderDaily(fc){
+  $("mc-pill").textContent = fc.microclimate?.active ? "🧠 Mikroklima aktiv" : "";
+  $("daily").innerHTML = fc.days.map((d,i)=>{
+    const {ico,desc}=wmo(d.weathercode,true);
+    const c = d.corrected||{}; const badges=(d.badges||[]).map(b=>`<span class="badge ${b.type}">${b.text}</span>`).join("");
+    const tmax = c.temp_max ?? d.temp_max, tmin = c.temp_min ?? d.temp_min;
+    return `<div class="card day-card">
+      <div class="dow">${i===0?"•":""} ${weekday(d.date)}</div>
+      <div class="date">${d.date.slice(8,10)}.${d.date.slice(5,7)}.</div>
+      <div class="ico" title="${desc}">${ico}</div>
+      <div class="tmax">${fmt0(tmax)}°</div><div class="tmin">${fmt0(tmin)}°</div>
+      <div class="det"><span>💧 <b>${fmt(d.precip_sum)}</b> mm</span>
+        <span>☔ <b>${fmt0(c.precip_prob ?? d.precip_prob)}</b> %</span>
+        <span>🌬️ <b>${fmt0(d.wind_max)}</b> km/h</span></div>
+      ${badges}</div>`;
+  }).join("");
+}
+
+function renderHourly(h){
+  $("hourly").innerHTML = h.hours.map(x=>{
+    const {ico,desc}=wmo(x.weathercode, x.is_day!==0);
+    return `<div class="card hour-card"><div class="hh">${hhmm(x.time)}</div>
+      <div class="ico" title="${desc}">${ico}</div><div class="t">${fmt0(x.temp)}°</div>
+      <div class="p">💧${fmt0(x.precip_prob)}%</div></div>`;
+  }).join("");
+}
+
+function renderOffgrid(solar, energyToday, autonomy){
+  const days = solar.days||[];
+  const maxPsh = Math.max(1,...days.map(d=>d.psh));
+  const solarRows = days.map(d=>`<div class="og-row">
+    <span class="d">${weekday(d.date)} ${d.date.slice(8,10)}.</span>
+    <span class="bar"><i style="width:${(d.psh/maxPsh*100).toFixed(0)}%;background:${d.rating==='good'?'var(--good)':d.rating==='fair'?'var(--warn)':'var(--bad)'}"></i></span>
+    <span class="v"><span class="dot ${d.rating}"></span>${fmt(d.psh)} PSH · ${fmt(d.estimated_kwh)} kWh</span></div>`).join("");
+
+  const cumRain = (window._forecastDays||[]).reduce((s,d)=>s+(d.precip_sum||0),0);
+  const windThr = CONFIG.WIND_THRESHOLD_KMH||10;
+  // wind hours per day estimated from hourly (next 24h only available) -> show daily max instead
+  const windRows = (window._forecastDays||[]).slice(0,7).map(d=>`<div class="og-row">
+    <span class="d">${weekday(d.date)} ${d.date.slice(8,10)}.</span>
+    <span class="v">${fmt0(d.wind_max)} km/h · ${windDir(d.wind_dir)}</span></div>`).join("");
+
+  let autoHtml="";
+  if(autonomy && autonomy.hours_remaining!=null){
+    autoHtml = `<div class="og-row"><span class="d">${t("autonomy")}</span>
+      <span class="v">≈ ${fmt(autonomy.hours_remaining)} ${t("hours")}</span></div>`;
+  }
+  let energyHtml="";
+  if(energyToday && energyToday.pv_energy_today!=null){
+    energyHtml = `<div class="og-row"><span class="d">☀️ ${t("today_pv")}</span><span class="v">${fmt(energyToday.pv_energy_today,1)} kWh</span></div>
+      <div class="og-row"><span class="d">🏠 ${t("today_load")}</span><span class="v">${fmt(energyToday.load_energy_today,1)} kWh</span></div>`;
+  }
+
+  $("offgrid").innerHTML = `
+    <div class="card og-card"><div class="head"><span class="e">☀️</span> ${t("solar_yield")}</div>${solarRows}</div>
+    <div class="card og-card"><div class="head"><span class="e">🌀</span> ${t("wind_potential")}</div>
+      <div style="font-size:.74rem;color:var(--dim);margin-bottom:6px">${t("wind_hours",{n:windThr})}</div>${windRows}</div>
+    <div class="card og-card"><div class="head"><span class="e">💧</span> ${t("rain_hydro")}</div>
+      <div class="og-row"><span class="d">${t("cumulative_rain")}</span><span class="v" style="color:var(--blue)">${fmt(cumRain)} mm</span></div>
+      ${(window._forecastDays||[]).slice(0,7).map(d=>`<div class="og-row"><span class="d">${weekday(d.date)}</span><span class="v">${fmt(d.precip_sum)} mm</span></div>`).join("")}</div>
+    ${(energyHtml||autoHtml)?`<div class="card og-card"><div class="head"><span class="e">⚡</span> ${t("energy_balance")}</div>${energyHtml}${autoHtml}</div>`:""}`;
+}
+
+function renderMicroclimate(mc){
+  const el=$("microclimate");
+  if(!mc || mc.active===false){
+    const n = mc?.days_of_data||0, m = mc?.days_needed||30;
+    el.innerHTML = `<div style="text-align:center;padding:8px">
+      <div style="color:var(--dim)">${t("mc_learning",{n,m})}</div>
+      <div class="progress"><i style="width:${Math.min(100,n/m*100).toFixed(0)}%"></i></div></div>`;
+    return;
+  }
+  const pct = v => v==null?"–":fmt0(v*100)+" %";
+  el.innerHTML = `<div class="grid mc-grid">
+    <div class="mc-card"><div class="v">${pct(mc.rain_forecast_accuracy)}</div><div class="k">${t("hit_rate")}</div></div>
+    <div class="mc-card"><div class="v">${fmt(mc.avg_temp_deviation)}°</div><div class="k">${t("temp_dev")}</div></div>
+    <div class="mc-card"><div class="v">×${fmt(mc.typical_wind_correction,2)}</div><div class="k">${t("wind_corr")}</div></div>
+    <div class="mc-card"><div class="v">${mc.days_of_data}</div><div class="k">${t("days_data")}</div></div>
+  </div>`;
+}
+
+/* ============================================================
+   Charts
+   ============================================================ */
+let charts={};
+const C_OPTS={responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+  plugins:{legend:{labels:{color:"#9a9ac4",boxWidth:12,font:{size:11}}}},
+  scales:{x:{ticks:{color:"#9a9ac4",maxRotation:0,autoSkip:true,maxTicksLimit:7,font:{size:9}},grid:{color:"#22223f"}},
+    y:{ticks:{color:"#9a9ac4",font:{size:9}},grid:{color:"#22223f"}}}};
+function chart(id,cfg){ if(charts[id])charts[id].destroy(); charts[id]=new Chart($(id),cfg); }
+const tlabel = iso => { const d=new Date(iso); return `${d.getDate()}.${d.getMonth()+1}. ${String(d.getHours()).padStart(2,"0")}h`; };
+
+function renderCharts(hist, bat){
+  const A="#00d4aa",B="#4895ef",W="#f4a261";
+  const hl=(hist.time||[]).map(tlabel);
+  chart("chTemp",{type:"line",data:{labels:hl,datasets:[
+    {label:"°C",data:hist.temperature_outdoor,borderColor:A,backgroundColor:"rgba(0,212,170,.12)",fill:true,tension:.35,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+  chart("chWind",{type:"line",data:{labels:hl,datasets:[
+    {label:t("wind"),data:hist.wind_speed,borderColor:A,fill:false,tension:.35,pointRadius:0,spanGaps:true},
+    {label:t("gust"),data:hist.wind_gust,borderColor:W,borderDash:[5,4],fill:false,tension:.35,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+  chart("chRain",{type:"bar",data:{labels:hl,datasets:[
+    {label:"mm",data:hist.rain_rate,backgroundColor:B,borderRadius:3}]},options:C_OPTS});
+  chart("chPress",{type:"line",data:{labels:hl,datasets:[
+    {label:"hPa",data:hist.pressure_relative,borderColor:A,backgroundColor:"rgba(0,212,170,.1)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+
+  if(bat && bat.series && (bat.series.battery_soc||[]).some(v=>v!=null)){
+    const bl=(bat.series.time||[]).map(tlabel);
+    chart("chSoc",{type:"line",data:{labels:bl,datasets:[
+      {label:"SOC %",data:bat.series.battery_soc,borderColor:A,backgroundColor:"rgba(0,212,170,.12)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+    chart("chPv",{type:"line",data:{labels:bl,datasets:[
+      {label:"PV W",data:bat.series.pv_power,borderColor:W,backgroundColor:"rgba(244,162,97,.15)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+    $("cc-soc").classList.remove("hidden"); $("cc-pv").classList.remove("hidden");
+  } else {
+    $("cc-soc").classList.add("hidden"); $("cc-pv").classList.add("hidden");
+  }
+}
+
+/* ============================================================
+   Orchestration
+   ============================================================ */
+function banner(msg,type){ const b=$("banner"); b.textContent=msg; b.className="banner show "+type; }
+function clearBanner(){ $("banner").className="banner"; }
+
+async function refresh(){
+  const q = `?pv_kwp=${CONFIG.PV_KWP||3.6}&pv_eff=${CONFIG.PV_EFFICIENCY||0.75}`;
+  const calls = {
+    current: api("/current"),
+    forecast: api("/forecast"),
+    hourly: api("/forecast/hourly"),
+    solar: api("/forecast/solar"+q),
+    history: api("/history?days=7"),
+    battery: api("/battery?days=7"),
+    energyToday: api("/energy/today"),
+    autonomy: api(`/energy/autonomy?capacity_kwh=${CONFIG.BATTERY_CAPACITY_KWH||9.6}`),
+    microclimate: api("/microclimate"),
+  };
+  const results = {}; let anyCached=false, anyOk=false, oldest=Date.now();
+  for(const [key,p] of Object.entries(calls)){
+    try{ const r=await p; results[key]=r.data; anyOk=true; if(r.cached){anyCached=true; if(r.age)oldest=Math.min(oldest,r.age);} }
+    catch(e){ results[key]=null; }
+  }
+  if(!anyOk){ banner(t("no_conn"),"err"); return; }
+
+  // Header sun + updated
+  if(results.current){
+    const c=results.current;
+    if(c.sun){ $("sunrise").textContent=c.sun.sunrise?hhmm(c.sun.sunrise):"–"; $("sunset").textContent=c.sun.sunset?hhmm(c.sun.sunset):"–"; }
+    $("updated").textContent = c.updated ? hhmm(c.updated) : new Date().toLocaleTimeString(LANG,{hour:"2-digit",minute:"2-digit"});
+    if(CONFIG.SHOW_BATTERY!==false) renderBattery(c);
+    renderCurrent(c);
+  }
+  if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
+  if(results.hourly) renderHourly(results.hourly);
+  if(results.history) renderCharts(results.history, results.battery);
+  if(CONFIG.SHOW_OFFGRID!==false && results.solar) renderOffgrid(results.solar, results.energyToday, results.autonomy);
+  if(CONFIG.SHOW_MICROCLIMATE!==false && results.microclimate!==null) renderMicroclimate(results.microclimate);
+
+  if(anyCached){ const mins=Math.round((Date.now()-oldest)/60000); banner(`📴 ${t("offline")} ${isFinite(mins)?mins+" min":""}`,"warn"); }
+  else clearBanner();
+}
+
+refresh();
+setInterval(refresh, REFRESH*1000);
+
+// Register service worker (PWA)
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>

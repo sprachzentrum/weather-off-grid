@@ -4,11 +4,12 @@ Historical data importer.
 Two sources, each writing into its InfluxDB bucket so the microclimate model has
 years of paired forecast-vs-measured data immediately:
 
-  python import_historical.py --ecowitt export.csv
-      Parse an Ecowitt CSV export (web/app "Download") into bucket `weather`.
-      Column names and units vary between export versions, so the parser maps
-      columns by fuzzy name and reads the unit from the header (℃/℉, km/h/mph,
-      hPa/inHg, mm/in), converting everything to metric.
+  python import_historical.py --ecowitt export.xlsx   (or export.csv)
+      Parse an Ecowitt export (web/app "Download"), either CSV or XLSX, into
+      bucket `weather`. Column names and units vary between export versions, so
+      the parser maps columns by fuzzy name and reads the unit from the header
+      (℃/℉, km/h/mph, hPa/inHg, mm/in), converting everything to metric.
+      XLSX requires openpyxl (already in requirements.txt).
 
   python import_historical.py --openmeteo --start 2023-06-01 --end 2026-06-01
       Pull the archived forecast for the location from Open-Meteo's
@@ -22,9 +23,11 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import os
 import re
 import sys
 from datetime import date, datetime, timezone
+from typing import Any
 
 import httpx
 
@@ -77,10 +80,30 @@ TIME_FORMATS = [
 ]
 
 
-def _parse_time(raw: str) -> datetime | None:
-    raw = raw.strip().strip('"')
+def _localize(naive: datetime) -> datetime:
+    """Treat a naive datetime as station-local time and return it in UTC."""
+    if naive.tzinfo is not None:
+        return naive.astimezone(timezone.utc)
+    if ZoneInfo is not None:
+        try:
+            return naive.replace(tzinfo=ZoneInfo(config.TIMEZONE)).astimezone(timezone.utc)
+        except Exception:  # noqa: BLE001
+            pass
+    return naive.replace(tzinfo=timezone.utc)
+
+
+def _parse_time(raw: Any) -> datetime | None:
+    # XLSX gives real datetime objects; CSV gives strings.
+    if isinstance(raw, datetime):
+        return _localize(raw)
+    if raw is None:
+        return None
+    raw = str(raw).strip().strip('"')
+    if not raw:
+        return None
     if raw.isdigit():  # epoch seconds
         return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+    naive = None
     for fmt in TIME_FORMATS:
         try:
             naive = datetime.strptime(raw, fmt)
@@ -92,21 +115,30 @@ def _parse_time(raw: str) -> datetime | None:
             naive = datetime.fromisoformat(raw)
         except ValueError:
             return None
-    if naive.tzinfo is not None:
-        return naive.astimezone(timezone.utc)
-    # Interpret as station-local time, then convert to UTC.
-    if ZoneInfo is not None:
-        try:
-            return naive.replace(tzinfo=ZoneInfo(config.TIMEZONE)).astimezone(timezone.utc)
-        except Exception:  # noqa: BLE001
-            pass
-    return naive.replace(tzinfo=timezone.utc)
+    return _localize(naive)
 
 
 def _unit_of(header: str) -> str:
     """Lowercased unit token from the header's parentheses, e.g. '℃', 'mph'."""
-    m = re.search(r"\(([^)]*)\)", header)
+    m = re.search(r"\(([^)]*)\)", str(header))
     return (m.group(1) if m else "").lower().replace(" ", "")
+
+
+def _cell_value(cell: Any) -> float | None:
+    """Coerce a CSV string or native XLSX cell to a float, or None if empty/invalid."""
+    if cell is None:
+        return None
+    if isinstance(cell, bool):
+        return None
+    if isinstance(cell, (int, float)):
+        return float(cell)
+    s = str(cell).strip()
+    if s in ("", "--", "---", "null", "None", "N/A", "--.-"):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 
 def _convert(kind: str, unit: str, value: float) -> float:
@@ -126,7 +158,7 @@ def _build_header_index(headers: list[str]) -> dict[int, tuple[str, str, str]]:
     index: dict[int, tuple[str, str, str]] = {}
     used_fields: set[str] = set()
     for i, h in enumerate(headers):
-        hl = h.lower()
+        hl = str(h).lower()
         for pattern, field, kind in COLUMN_MAP:
             if field in used_fields:
                 continue
@@ -137,48 +169,80 @@ def _build_header_index(headers: list[str]) -> dict[int, tuple[str, str, str]]:
     return index
 
 
-def rows_from_ecowitt_csv(path: str) -> list[dict]:
-    """Pure parse: return [{'ts': datetime, 'fields': {...}}] from an Ecowitt CSV."""
+def _parse_table(headers: list, row_iter) -> list[dict]:
+    """
+    Shared parser for both CSV and XLSX: given a header list and an iterable of
+    row lists, return [{'ts': datetime, 'fields': {...}}]. Cells may be strings
+    (CSV) or native values (XLSX).
+    """
+    col_index = _build_header_index(headers)
+    # Time column = first column whose header looks like a date/time.
+    time_col = next(
+        (i for i, h in enumerate(headers) if re.search(r"time|date", str(h), re.I)), 0
+    )
+    if not col_index:
+        log.warning("no known weather columns recognised in header: %s", headers)
+
+    rows = []
+    for raw in row_iter:
+        if not raw or len(raw) <= time_col:
+            continue
+        ts = _parse_time(raw[time_col])
+        if ts is None:
+            continue
+        fields = {}
+        for i, (field, kind, unit) in col_index.items():
+            if i >= len(raw):
+                continue
+            val = _cell_value(raw[i])
+            if val is None:
+                continue
+            fields[field] = _convert(kind, unit, val)
+        if fields:
+            rows.append({"ts": ts, "fields": fields})
+    return rows
+
+
+def rows_from_ecowitt(path: str) -> list[dict]:
+    """
+    Parse an Ecowitt export into [{'ts', 'fields'}]. Dispatches by extension:
+    .xlsx/.xlsm via openpyxl, everything else as CSV.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "openpyxl wird zum Lesen von XLSX benötigt: pip install openpyxl"
+            ) from exc
+        wb = load_workbook(path, read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            it = ws.iter_rows(values_only=True)
+            try:
+                headers = list(next(it))
+            except StopIteration:
+                return []
+            return _parse_table(headers, (list(r) for r in it))
+        finally:
+            wb.close()
+
     with open(path, newline="", encoding="utf-8-sig") as fh:
         reader = csv.reader(fh)
         try:
             headers = next(reader)
         except StopIteration:
             return []
-        col_index = _build_header_index(headers)
-        # Time column = first column whose header looks like a date/time.
-        time_col = next(
-            (i for i, h in enumerate(headers) if re.search(r"time|date", h, re.I)), 0
-        )
-        if not col_index:
-            log.warning("no known weather columns recognised in header: %s", headers)
+        return _parse_table(headers, reader)
 
-        rows = []
-        for raw in reader:
-            if not raw or len(raw) <= time_col:
-                continue
-            ts = _parse_time(raw[time_col])
-            if ts is None:
-                continue
-            fields = {}
-            for i, (field, kind, unit) in col_index.items():
-                if i >= len(raw):
-                    continue
-                cell = raw[i].strip()
-                if cell in ("", "--", "---", "null", "None"):
-                    continue
-                try:
-                    val = float(cell)
-                except ValueError:
-                    continue
-                fields[field] = _convert(kind, unit, val)
-            if fields:
-                rows.append({"ts": ts, "fields": fields})
-        return rows
+
+# Backward-compatible alias (CSV + XLSX both supported now).
+rows_from_ecowitt_csv = rows_from_ecowitt
 
 
 def import_ecowitt(path: str) -> int:
-    rows = rows_from_ecowitt_csv(path)
+    rows = rows_from_ecowitt(path)
     points = [
         Point("station").time(r["ts"]).tag("source", "import")
         for r in rows
@@ -266,7 +330,7 @@ def _write_batched(bucket: str, points: list[Point], batch: int = 1000) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Import historical weather / forecast data into InfluxDB.")
-    ap.add_argument("--ecowitt", metavar="CSV", help="path to an Ecowitt CSV export")
+    ap.add_argument("--ecowitt", metavar="FILE", help="path to an Ecowitt export (CSV or XLSX)")
     ap.add_argument("--openmeteo", action="store_true", help="fetch Open-Meteo historical forecast archive")
     ap.add_argument("--start", help="start date YYYY-MM-DD (with --openmeteo)")
     ap.add_argument("--end", help="end date YYYY-MM-DD (with --openmeteo)")

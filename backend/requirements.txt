@@ -5,3 +5,7 @@ httpx==0.27.0
 python-dotenv==1.0.1
 python-multipart==0.0.9
 growattServer>=1.5.0
+openpyxl==3.1.5
+# IANA timezone database so zoneinfo works on slim images / Windows
+# (needed to localize Ecowitt export timestamps correctly).
+tzdata==2024.1

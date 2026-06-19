@@ -8,13 +8,14 @@
  *
  * Bump CACHE_VERSION to force clients to drop the old cache on next load.
  */
-const CACHE_VERSION = "wog-v1";
+const CACHE_VERSION = "wog-v2";
 const STATIC_CACHE = CACHE_VERSION + "-static";
 const API_CACHE = CACHE_VERSION + "-api";
 
 const PRECACHE = [
   "./",
   "./index.html",
+  "./settings.html",
   "./manifest.json",
   "./config.js",
   "./icons/icon-192.png",

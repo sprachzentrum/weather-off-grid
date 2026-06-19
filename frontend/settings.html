@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#00d4aa">
+<title>Einstellungen · Weather Off-Grid</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{--bg:#0f0f1a;--card:#1a1a2e;--card-2:#222241;--line:#2c2c4a;--txt:#e8e8f5;--dim:#9a9ac4;
+    --accent:#00d4aa;--good:#00d4aa;--warn:#f4a261;--bad:#e63946;--radius:14px;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);line-height:1.45;padding:16px;max-width:980px;margin:0 auto;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding-bottom:max(16px,env(safe-area-inset-bottom))}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 2px 18px}
+  header h1{font-size:1.4rem}
+  .back{text-decoration:none;color:var(--dim);font-size:.9rem}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:14px}
+  .card h2{font-size:1rem;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+  label{display:block;font-size:.78rem;color:var(--dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
+  input,select{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);
+    border-radius:10px;padding:9px 11px;font-size:.95rem;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .field{margin-bottom:12px}
+  .row-check{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .row-check input{width:auto}
+  .row-check label{margin:0;text-transform:none;letter-spacing:0;font-size:.92rem;color:var(--txt)}
+  button{background:var(--accent);color:#06281f;border:none;border-radius:10px;padding:10px 16px;
+    font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit}
+  button.ghost{background:var(--card-2);color:var(--txt);border:1px solid var(--line)}
+  button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
+  button:disabled{opacity:.5;cursor:wait}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .test-status{font-size:.82rem;margin-left:4px}
+  .test-status.ok{color:var(--good)} .test-status.err{color:var(--bad)}
+  .sites-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+  .site-tab{background:var(--card-2);border:1px solid var(--line);color:var(--txt);padding:7px 13px;
+    border-radius:999px;font-size:.88rem;cursor:pointer;font-weight:600}
+  .site-tab.active{background:var(--accent);color:#06281f;border-color:var(--accent)}
+  .muted{color:var(--dim);font-size:.84rem}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--card-2);
+    border:1px solid var(--line);padding:11px 18px;border-radius:12px;font-size:.9rem;opacity:0;
+    transition:opacity .3s;pointer-events:none;z-index:60}
+  .toast.show{opacity:1}
+  .toast.ok{border-color:var(--good)} .toast.err{border-color:var(--bad)}
+  .hidden{display:none!important}
+  /* PIN gate */
+  #pin{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px}
+  #pin .box{max-width:360px;width:100%;text-align:center}
+  #pin input{text-align:center;font-size:1.3rem;letter-spacing:6px;margin:14px 0}
+  /* Wizard */
+  .steps{display:flex;gap:6px;margin-bottom:16px}
+  .step-dot{flex:1;height:6px;border-radius:3px;background:var(--card-2)}
+  .step-dot.done{background:var(--accent)}
+  .sysrow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:.88rem}
+  .sysrow:last-child{border-bottom:none}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+  .dot.ok{background:var(--good)}.dot.off{background:var(--dim)}.dot.bad{background:var(--bad)}
+</style>
+</head>
+<body>
+
+<!-- PIN gate -->
+<div id="pin" class="hidden">
+  <div class="box">
+    <h1>🔒 Admin-PIN</h1>
+    <p class="muted">Die Einstellungen sind per PIN geschützt.</p>
+    <input id="pin-input" type="password" inputmode="numeric" placeholder="••••" autocomplete="off">
+    <button id="pin-submit" style="width:100%">Entsperren</button>
+    <p id="pin-err" class="test-status err"></p>
+  </div>
+</div>
+
+<header>
+  <h1>⚙️ Einstellungen</h1>
+  <a class="back" href="index.html">← Dashboard</a>
+</header>
+
+<!-- ============ WIZARD (first run) ============ -->
+<div id="wizard" class="hidden">
+  <div class="card">
+    <div class="steps">
+      <div class="step-dot" data-s="0"></div><div class="step-dot" data-s="1"></div>
+      <div class="step-dot" data-s="2"></div><div class="step-dot" data-s="3"></div>
+    </div>
+    <h2 id="wiz-title">Willkommen</h2>
+    <p class="muted" id="wiz-sub">Richte deinen ersten Standort ein.</p>
+    <div id="wiz-body" style="margin-top:14px"></div>
+    <div class="btn-row" style="justify-content:space-between;margin-top:16px">
+      <button class="ghost" id="wiz-back">Zurück</button>
+      <button id="wiz-next">Weiter</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ADMIN ============ -->
+<div id="admin" class="hidden">
+  <div class="sites-bar" id="sites-bar"></div>
+
+  <div class="card">
+    <h2>📍 Standort &amp; Station</h2>
+    <div class="field"><label>Stationsname</label><input id="f-name"></div>
+    <div class="grid2">
+      <div class="field"><label>Breitengrad</label><input id="f-lat" type="number" step="any"></div>
+      <div class="field"><label>Längengrad</label><input id="f-lng" type="number" step="any"></div>
+      <div class="field"><label>Höhe (m)</label><input id="f-alt" type="number" step="any"></div>
+      <div class="field"><label>Zeitzone</label><input id="f-tz" placeholder="America/Argentina/Cordoba"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🌡️ Ecowitt</h2>
+    <div class="row-check"><input type="checkbox" id="f-eco-en"><label for="f-eco-en">Ecowitt aktiviert</label></div>
+    <div class="grid2">
+      <div class="field"><label>Application Key</label><input id="f-eco-app"></div>
+      <div class="field"><label>API Key</label><input id="f-eco-api"></div>
+      <div class="field"><label>MAC-Adresse</label><input id="f-eco-mac" placeholder="C4:5B:BE:6E:46:15"></div>
+    </div>
+    <div class="btn-row"><button class="ghost" data-test="ecowitt">Verbindung testen</button><span class="test-status" data-status="ecowitt"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>🔋 Growatt</h2>
+    <div class="row-check"><input type="checkbox" id="f-gw-en"><label for="f-gw-en">Growatt aktiviert</label></div>
+    <div class="grid2">
+      <div class="field"><label>Benutzername (ShinePhone)</label><input id="f-gw-user"></div>
+      <div class="field"><label>Passwort</label><input id="f-gw-pass" type="password" placeholder="•••••• (leer = unverändert)"></div>
+      <div class="field"><label>Plant ID</label><input id="f-gw-plant"></div>
+      <div class="field"><label>Inverter SN</label><input id="f-gw-sn"></div>
+    </div>
+    <div class="btn-row"><button class="ghost" data-test="growatt">Verbindung testen</button><span class="test-status" data-status="growatt"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>☀️ Off-Grid / Energie</h2>
+    <div class="grid2">
+      <div class="field"><label>PV-Leistung (kWp)</label><input id="f-pv" type="number" step="any"></div>
+      <div class="field"><label>System-Wirkungsgrad (0–1)</label><input id="f-eff" type="number" step="any"></div>
+      <div class="field"><label>Batteriekapazität (kWh)</label><input id="f-cap" type="number" step="any"></div>
+      <div class="field"><label>Wind-Schwelle (km/h)</label><input id="f-wind" type="number" step="any"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🖥️ Anzeige (global)</h2>
+    <div class="grid2">
+      <div class="field"><label>Sprache</label><select id="f-lang"><option value="de">Deutsch</option><option value="en">English</option><option value="es">Español</option></select></div>
+      <div class="field"><label>Einheiten</label><select id="f-units"><option value="metric">metrisch</option><option value="imperial">imperial</option></select></div>
+      <div class="field"><label>Refresh-Intervall (s)</label><input id="f-refresh" type="number" min="60" step="10"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🗄️ System</h2>
+    <div id="system"><span class="muted">Lade Status …</span></div>
+  </div>
+
+  <div class="btn-row" style="justify-content:space-between">
+    <button class="danger" id="btn-delete">Standort löschen</button>
+    <div class="btn-row">
+      <button class="ghost" id="btn-add">+ Standort hinzufügen</button>
+      <button id="btn-save">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="config.js"></script>
+<script>
+/* ── config / API base ── */
+const CFG = (typeof CONFIG !== "undefined") ? CONFIG : {};
+const API = ((CFG.BACKEND_URL) || (location.origin + "/api")).replace(/\/$/, "");
+const $ = id => document.getElementById(id);
+
+let PIN = sessionStorage.getItem("wog:pin") || "";
+let MODEL = null;          // full settings {display, default_site, sites:[...]}
+let CUR = 0;               // current site index in admin
+let WSTEP = 0;             // wizard step
+let WSITE = null;          // wizard working site
+
+function headers(){ const h={"Content-Type":"application/json"}; if(PIN) h["X-Admin-Pin"]=PIN; return h; }
+async function apiGet(path){ const r=await fetch(API+path,{headers:headers(),cache:"no-store"}); if(r.status===401) throw {pin:true}; if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+async function apiSend(path,method,body){ const r=await fetch(API+path,{method,headers:headers(),body:body?JSON.stringify(body):undefined}); if(r.status===401) throw {pin:true}; if(!r.ok) throw new Error((await r.text())||("HTTP "+r.status)); return r.json(); }
+
+function toast(msg,type="ok"){ const el=$("toast"); el.textContent=msg; el.className="toast show "+type; setTimeout(()=>el.className="toast",2500); }
+
+function blankSite(){ return {site_id:null,name:"Neuer Standort",latitude:0,longitude:0,altitude:0,timezone:"UTC",
+  ecowitt:{enabled:false,app_key:"",api_key:"",mac:""},
+  growatt:{enabled:false,username:"",password:"",plant_id:"",inverter_sn:""},
+  pv_kwp:3.6,pv_efficiency:0.75,battery_capacity_kwh:9.6,wind_threshold_kmh:10}; }
+
+/* ── boot ── */
+async function boot(){
+  let fc;
+  try{ fc = await fetch(API+"/settings/frontend").then(r=>r.json()); }
+  catch(e){ document.body.innerHTML='<p style="padding:30px">Backend nicht erreichbar.</p>'; return; }
+
+  if(fc.admin_pin_required && !(await pinValid())){ showPinGate(); return; }
+  await afterAuth(fc);
+}
+
+async function pinValid(){
+  if(!PIN) return false;
+  try{ const r=await fetch(API+"/settings/verify-pin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pin:PIN})}); const j=await r.json(); return j.ok; }
+  catch(e){ return false; }
+}
+function showPinGate(){
+  $("pin").classList.remove("hidden");
+  $("pin-submit").onclick = async ()=>{
+    const v=$("pin-input").value.trim();
+    const r=await fetch(API+"/settings/verify-pin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pin:v})}).then(x=>x.json());
+    if(r.ok){ PIN=v; sessionStorage.setItem("wog:pin",v); $("pin").classList.add("hidden"); boot(); }
+    else $("pin-err").textContent="Falscher PIN.";
+  };
+  $("pin-input").addEventListener("keydown",e=>{ if(e.key==="Enter") $("pin-submit").click(); });
+}
+
+async function afterAuth(fc){
+  // Load full settings (masked secrets) for editing.
+  MODEL = await apiGet("/settings");
+  if(!MODEL.sites) MODEL.sites=[];
+  if(!fc.configured || MODEL.sites.length===0){
+    startWizard();
+  } else {
+    startAdmin();
+  }
+}
+
+/* ============ WIZARD ============ */
+const WIZ_STEPS = [
+  {title:"Standort", sub:"Wo steht die Station?", fields:"location"},
+  {title:"Ecowitt", sub:"Wetterstation (optional)", fields:"ecowitt"},
+  {title:"Growatt", sub:"Inverter (optional, überspringbar)", fields:"growatt"},
+  {title:"Station & Energie", sub:"Name und PV-System", fields:"energy"},
+];
+function startWizard(){
+  $("wizard").classList.remove("hidden"); $("admin").classList.add("hidden");
+  WSITE = MODEL.sites[0] ? JSON.parse(JSON.stringify(MODEL.sites[0])) : blankSite();
+  WSTEP = 0; renderWizard();
+}
+function renderWizard(){
+  const step = WIZ_STEPS[WSTEP];
+  $("wiz-title").textContent = `${WSTEP+1}/4 · ${step.title}`;
+  $("wiz-sub").textContent = step.sub;
+  document.querySelectorAll(".step-dot").forEach((d,i)=>d.classList.toggle("done", i<=WSTEP));
+  $("wiz-body").innerHTML = wizFields(step.fields);
+  bindTestButtons($("wiz-body"));
+  $("wiz-back").style.visibility = WSTEP===0 ? "hidden" : "visible";
+  $("wiz-next").textContent = WSTEP===3 ? "Speichern & Fertig" : "Weiter";
+}
+function wizFields(kind){
+  const s=WSITE;
+  if(kind==="location") return `
+    <div class="field"><label>Breitengrad</label><input id="w-lat" type="number" step="any" value="${s.latitude??""}"></div>
+    <div class="field"><label>Längengrad</label><input id="w-lng" type="number" step="any" value="${s.longitude??""}"></div>
+    <div class="grid2"><div class="field"><label>Höhe (m)</label><input id="w-alt" type="number" value="${s.altitude??0}"></div>
+    <div class="field"><label>Zeitzone</label><input id="w-tz" value="${s.timezone||""}" placeholder="America/Argentina/Cordoba"></div></div>`;
+  if(kind==="ecowitt") return `
+    <div class="row-check"><input type="checkbox" id="w-eco-en" ${s.ecowitt.enabled?"checked":""}><label for="w-eco-en">Ecowitt aktiviert</label></div>
+    <div class="field"><label>Application Key</label><input id="w-eco-app" value="${s.ecowitt.app_key||""}"></div>
+    <div class="field"><label>API Key</label><input id="w-eco-api" value="${s.ecowitt.api_key||""}"></div>
+    <div class="field"><label>MAC</label><input id="w-eco-mac" value="${s.ecowitt.mac||""}" placeholder="C4:5B:BE:6E:46:15"></div>
+    <div class="btn-row"><button class="ghost" data-test="ecowitt" type="button">Testen</button><span class="test-status" data-status="ecowitt"></span></div>`;
+  if(kind==="growatt") return `
+    <div class="row-check"><input type="checkbox" id="w-gw-en" ${s.growatt.enabled?"checked":""}><label for="w-gw-en">Growatt aktiviert</label></div>
+    <div class="field"><label>Benutzername</label><input id="w-gw-user" value="${s.growatt.username||""}"></div>
+    <div class="field"><label>Passwort</label><input id="w-gw-pass" type="password" value=""></div>
+    <div class="grid2"><div class="field"><label>Plant ID</label><input id="w-gw-plant" value="${s.growatt.plant_id||""}"></div>
+    <div class="field"><label>Inverter SN</label><input id="w-gw-sn" value="${s.growatt.inverter_sn||""}"></div></div>
+    <div class="btn-row"><button class="ghost" data-test="growatt" type="button">Testen</button><span class="test-status" data-status="growatt"></span></div>`;
+  return `
+    <div class="field"><label>Stationsname</label><input id="w-name" value="${s.name||""}"></div>
+    <div class="grid2">
+    <div class="field"><label>PV-Leistung (kWp)</label><input id="w-pv" type="number" step="any" value="${s.pv_kwp??3.6}"></div>
+    <div class="field"><label>Wirkungsgrad (0–1)</label><input id="w-eff" type="number" step="any" value="${s.pv_efficiency??0.75}"></div>
+    <div class="field"><label>Batterie (kWh)</label><input id="w-cap" type="number" step="any" value="${s.battery_capacity_kwh??9.6}"></div>
+    <div class="field"><label>Wind-Schwelle (km/h)</label><input id="w-wind" type="number" value="${s.wind_threshold_kmh??10}"></div></div>`;
+}
+function wizCollect(kind){
+  const s=WSITE, v=id=>{const e=$(id);return e?e.value:undefined;};
+  if(kind==="location"){ s.latitude=parseFloat(v("w-lat"))||0; s.longitude=parseFloat(v("w-lng"))||0; s.altitude=parseFloat(v("w-alt"))||0; s.timezone=v("w-tz")||"UTC"; }
+  if(kind==="ecowitt"){ s.ecowitt={enabled:$("w-eco-en").checked,app_key:v("w-eco-app"),api_key:v("w-eco-api"),mac:v("w-eco-mac")}; }
+  if(kind==="growatt"){ s.growatt={enabled:$("w-gw-en").checked,username:v("w-gw-user"),password:v("w-gw-pass"),plant_id:v("w-gw-plant"),inverter_sn:v("w-gw-sn")}; }
+  if(kind==="energy"){ s.name=v("w-name")||"Standort"; s.pv_kwp=parseFloat(v("w-pv"))||0; s.pv_efficiency=parseFloat(v("w-eff"))||0.75; s.battery_capacity_kwh=parseFloat(v("w-cap"))||0; s.wind_threshold_kmh=parseFloat(v("w-wind"))||10; }
+}
+$("wiz-next").onclick = async ()=>{
+  wizCollect(WIZ_STEPS[WSTEP].fields);
+  if(WSTEP<3){ WSTEP++; renderWizard(); return; }
+  // finish: save as the (first) site
+  try{
+    await apiSend("/settings","POST",{display:MODEL.display||{language:"de"}, sites:[stripForSave(WSITE)]});
+    toast("Gespeichert ✓");
+    setTimeout(()=>{ location.href="index.html"+(WSITE.site_id?("#"+WSITE.site_id):""); }, 600);
+  }catch(e){ handleErr(e); }
+};
+$("wiz-back").onclick = ()=>{ wizCollect(WIZ_STEPS[WSTEP].fields); if(WSTEP>0){ WSTEP--; renderWizard(); } };
+
+/* ============ ADMIN ============ */
+function startAdmin(){
+  $("admin").classList.remove("hidden"); $("wizard").classList.add("hidden");
+  CUR = 0; renderSitesBar(); loadSiteIntoForm(); loadSystem();
+  $("f-lang").value = (MODEL.display&&MODEL.display.language)||"de";
+  $("f-units").value = (MODEL.display&&MODEL.display.units)||"metric";
+  $("f-refresh").value = (MODEL.display&&MODEL.display.refresh_interval)||300;
+  bindTestButtons(document);
+}
+function renderSitesBar(){
+  $("sites-bar").innerHTML = MODEL.sites.map((s,i)=>
+    `<div class="site-tab ${i===CUR?"active":""}" data-i="${i}">${s.name||s.site_id}</div>`).join("");
+  document.querySelectorAll(".site-tab").forEach(el=>el.onclick=()=>{ collectForm(); CUR=+el.dataset.i; renderSitesBar(); loadSiteIntoForm(); });
+}
+function loadSiteIntoForm(){
+  const s = MODEL.sites[CUR]; if(!s) return;
+  $("f-name").value=s.name||""; $("f-lat").value=s.latitude??""; $("f-lng").value=s.longitude??"";
+  $("f-alt").value=s.altitude??0; $("f-tz").value=s.timezone||"";
+  const e=s.ecowitt||{}; $("f-eco-en").checked=!!e.enabled; $("f-eco-app").value=e.app_key||""; $("f-eco-api").value=e.api_key||""; $("f-eco-mac").value=e.mac||"";
+  const g=s.growatt||{}; $("f-gw-en").checked=!!g.enabled; $("f-gw-user").value=g.username||""; $("f-gw-pass").value=""; $("f-gw-pass").placeholder=(g.password==="********")?"•••••• (unverändert)":"";
+  $("f-gw-plant").value=g.plant_id||""; $("f-gw-sn").value=g.inverter_sn||"";
+  $("f-pv").value=s.pv_kwp??3.6; $("f-eff").value=s.pv_efficiency??0.75; $("f-cap").value=s.battery_capacity_kwh??9.6; $("f-wind").value=s.wind_threshold_kmh??10;
+  document.querySelectorAll("[data-status]").forEach(el=>el.textContent="");
+}
+function collectForm(){
+  const s = MODEL.sites[CUR]; if(!s) return;
+  s.name=$("f-name").value||"Standort"; s.latitude=parseFloat($("f-lat").value)||0; s.longitude=parseFloat($("f-lng").value)||0;
+  s.altitude=parseFloat($("f-alt").value)||0; s.timezone=$("f-tz").value||"UTC";
+  s.ecowitt={enabled:$("f-eco-en").checked,app_key:$("f-eco-app").value,api_key:$("f-eco-api").value,mac:$("f-eco-mac").value};
+  const pass=$("f-gw-pass").value;  // empty = keep existing (backend handles)
+  s.growatt={enabled:$("f-gw-en").checked,username:$("f-gw-user").value,password:pass,plant_id:$("f-gw-plant").value,inverter_sn:$("f-gw-sn").value};
+  s.pv_kwp=parseFloat($("f-pv").value)||0; s.pv_efficiency=parseFloat($("f-eff").value)||0.75;
+  s.battery_capacity_kwh=parseFloat($("f-cap").value)||0; s.wind_threshold_kmh=parseFloat($("f-wind").value)||10;
+}
+function stripForSave(s){
+  // Drop masked passwords so the backend keeps the stored secret.
+  const c=JSON.parse(JSON.stringify(s));
+  if(c.growatt && c.growatt.password==="********") c.growatt.password="";
+  return c;
+}
+$("btn-add").onclick = ()=>{ collectForm(); MODEL.sites.push(blankSite()); CUR=MODEL.sites.length-1; renderSitesBar(); loadSiteIntoForm(); };
+$("btn-delete").onclick = ()=>{
+  if(MODEL.sites.length<=1){ toast("Mindestens ein Standort nötig","err"); return; }
+  if(!confirm("Diesen Standort wirklich löschen?")) return;
+  MODEL.sites.splice(CUR,1); CUR=0; renderSitesBar(); loadSiteIntoForm();
+};
+$("btn-save").onclick = async ()=>{
+  collectForm();
+  const payload = {
+    display:{language:$("f-lang").value,units:$("f-units").value,refresh_interval:parseInt($("f-refresh").value)||300},
+    sites: MODEL.sites.map(stripForSave),
+  };
+  $("btn-save").disabled=true;
+  try{ MODEL = await apiSend("/settings","POST",payload); renderSitesBar(); toast("Gespeichert ✓"); loadSystem(); }
+  catch(e){ handleErr(e); }
+  finally{ $("btn-save").disabled=false; }
+};
+
+/* ── connection tests (shared by wizard + admin) ── */
+function bindTestButtons(root){
+  root.querySelectorAll("[data-test]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      const service = btn.getAttribute("data-test");
+      const statusEl = (root.querySelector(`[data-status="${service}"]`)) || document.querySelector(`[data-status="${service}"]`);
+      const site = currentEditingSite();
+      let body = {service, site};
+      if(service==="growatt" && (!site.growatt.password)){ body = {service, site_id: site.site_id}; }  // use stored secret
+      btn.disabled=true; if(statusEl){ statusEl.textContent="… teste"; statusEl.className="test-status"; }
+      try{
+        const r = await apiSend("/settings/test","POST",body);
+        if(statusEl){ statusEl.textContent=(r.ok?"✓ ":"✗ ")+r.detail; statusEl.className="test-status "+(r.ok?"ok":"err"); }
+      }catch(e){ if(statusEl){ statusEl.textContent="Fehler"; statusEl.className="test-status err"; } handleErr(e,true); }
+      finally{ btn.disabled=false; }
+    };
+  });
+}
+function currentEditingSite(){
+  // Build the site object from whichever form is active (wizard vs admin).
+  if(!$("admin").classList.contains("hidden")){ collectForm(); return JSON.parse(JSON.stringify(MODEL.sites[CUR])); }
+  // wizard: collect visible step then merge
+  wizCollect(WIZ_STEPS[WSTEP].fields); return JSON.parse(JSON.stringify(WSITE));
+}
+
+/* ── system status ── */
+async function loadSystem(){
+  try{
+    const st = await apiGet("/settings/status");
+    const inf = st.influxdb||{};
+    const sitesRows = (st.sites||[]).map(s=>`<div class="sysrow"><span>${s.name||s.site_id}</span>
+      <span><span class="dot ${s.ecowitt.last_seen?'ok':(s.ecowitt.enabled?'bad':'off')}"></span>Ecowitt
+      &nbsp;<span class="dot ${s.growatt.last_seen?'ok':(s.growatt.enabled?'bad':'off')}"></span>Growatt
+      &nbsp;· ${s.weather_points} Wetter / ${s.energy_points} Energie</span></div>`).join("");
+    $("system").innerHTML = `
+      <div class="sysrow"><span>InfluxDB</span><span><span class="dot ${inf.ok?'ok':'bad'}"></span>${inf.ok?'verbunden':'offline'} · ${inf.url||''}</span></div>
+      <div class="sysrow"><span>Datenpunkte</span><span>${(inf.buckets||{}).weather||0} Wetter · ${(inf.buckets||{}).energy||0} Energie · ${(inf.buckets||{}).forecasts||0} Forecasts</span></div>
+      ${sitesRows}`;
+  }catch(e){ $("system").innerHTML='<span class="muted">Status nicht verfügbar.</span>'; }
+}
+
+function handleErr(e, quiet){
+  if(e&&e.pin){ sessionStorage.removeItem("wog:pin"); PIN=""; showPinGate(); return; }
+  if(!quiet) toast("Fehler: "+(e&&e.message||e),"err");
+}
+
+boot();
+</script>
+</body>
+</html>

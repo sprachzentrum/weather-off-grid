@@ -20,17 +20,17 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 import db
-from collectors import ecowitt_collector, growatt_collector, openmeteo_collector
+import settings_store
+from collectors import ecowitt_collector
+from collector_manager import manager
 from api import router as api_router
+from settings_api import router as settings_router
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 log = logging.getLogger("main")
-
-# Background tasks are tracked so they can be cancelled cleanly on shutdown.
-_background: list[asyncio.Task] = []
 
 
 async def _startup() -> None:
@@ -48,21 +48,15 @@ async def _startup() -> None:
     except Exception as exc:  # noqa: BLE001
         log.error("bucket bootstrap failed: %s", exc)
 
-    # Launch collectors. Each one decides internally whether it is configured.
-    _background.append(asyncio.create_task(ecowitt_collector.run_poller()))
-    _background.append(asyncio.create_task(growatt_collector.run_poller()))
-    _background.append(asyncio.create_task(openmeteo_collector.run_poller()))
-    log.info("backend ready, %d background collectors scheduled", len(_background))
+    # Load settings (from settings.json or bootstrapped from .env) and start one
+    # set of collectors per configured site.
+    settings_store.load()
+    await manager.reload()
+    log.info("backend ready (%d site(s) configured)", len(settings_store.sites()))
 
 
 async def _shutdown() -> None:
-    for task in _background:
-        task.cancel()
-    for task in _background:
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
+    await manager.stop()
     db.close()
     log.info("backend stopped")
 
@@ -84,9 +78,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ecowitt webhook + all /api/* endpoints.
+# Ecowitt webhook + data API + settings/admin API.
 app.include_router(ecowitt_collector.router)
 app.include_router(api_router)
+app.include_router(settings_router)
 
 
 @app.get("/health")

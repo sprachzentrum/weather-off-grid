@@ -45,12 +45,16 @@ def _sector(deg) -> str | None:
 
 
 # ── InfluxDB readers ───────────────────────────────────────────────────────
-def _daily_agg(field: str, fn: str) -> dict[str, float]:
+def _site_line(site_id: str | None) -> str:
+    return f' and r.site_id == "{site_id}"' if site_id else ""
+
+
+def _daily_agg(field: str, fn: str, site_id: str | None) -> dict[str, float]:
     """Per-day aggregate of a measured weather field -> {date: value}."""
     flux = f'''
     from(bucket: "{config.BUCKET_WEATHER}")
       |> range(start: -{LOOKBACK_DAYS}d)
-      |> filter(fn: (r) => r._measurement == "station" and r._field == "{field}")
+      |> filter(fn: (r) => r._measurement == "station" and r._field == "{field}"{_site_line(site_id)})
       |> aggregateWindow(every: 1d, fn: {fn}, createEmpty: false)
     '''
     out: dict[str, float] = {}
@@ -65,12 +69,12 @@ def _daily_agg(field: str, fn: str) -> dict[str, float]:
     return out
 
 
-def _measured_daily() -> dict[str, dict]:
-    tmax = _daily_agg("temperature_outdoor", "max")
-    tmin = _daily_agg("temperature_outdoor", "min")
-    rain = _daily_agg("rain_daily", "max")  # cumulative counter -> day total
-    wind = _daily_agg("wind_speed", "max")
-    wdir = _daily_agg("wind_direction", "mean")
+def _measured_daily(site_id: str | None) -> dict[str, dict]:
+    tmax = _daily_agg("temperature_outdoor", "max", site_id)
+    tmin = _daily_agg("temperature_outdoor", "min", site_id)
+    rain = _daily_agg("rain_daily", "max", site_id)  # cumulative counter -> day total
+    wind = _daily_agg("wind_speed", "max", site_id)
+    wdir = _daily_agg("wind_direction", "mean", site_id)
     days = set(tmax) | set(tmin) | set(rain) | set(wind)
     return {
         d: {
@@ -84,12 +88,12 @@ def _measured_daily() -> dict[str, dict]:
     }
 
 
-def _forecast_daily() -> dict[str, dict]:
+def _forecast_daily(site_id: str | None) -> dict[str, dict]:
     """1-day-ahead archived forecasts keyed by their target date."""
     flux = f'''
     from(bucket: "{config.BUCKET_FORECASTS}")
       |> range(start: -{LOOKBACK_DAYS}d)
-      |> filter(fn: (r) => r._measurement == "forecast_daily" and r.lead_days == "1")
+      |> filter(fn: (r) => r._measurement == "forecast_daily" and r.lead_days == "1"{_site_line(site_id)})
       |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
     '''
     out: dict[str, dict] = {}
@@ -111,9 +115,9 @@ def _forecast_daily() -> dict[str, dict]:
 
 
 # ── Model building ─────────────────────────────────────────────────────────
-def _build() -> dict:
-    measured = _measured_daily()
-    forecast = _forecast_daily()
+def _build(site_id: str | None) -> dict:
+    measured = _measured_daily(site_id)
+    forecast = _forecast_daily(site_id)
     pairs = []
     for day, m in measured.items():
         f = forecast.get(day)
@@ -228,24 +232,25 @@ def _build() -> dict:
     }
 
 
-def _build_cached() -> dict:
+def _build_cached(site_id: str | None) -> dict:
+    key = site_id or "default"
     now = time.monotonic()
-    hit = _cache.get("model")
+    hit = _cache.get(key)
     if hit and now - hit[0] < _CACHE_TTL:
         return hit[1]
     try:
-        model = _build()
+        model = _build(site_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("model build failed: %s", exc)
         model = {"days_of_data": 0, "active": False, "confidence": 0.0}
-    _cache["model"] = (now, model)
+    _cache[key] = (now, model)
     return model
 
 
 # ── Public API used by api.py ──────────────────────────────────────────────
-def get_corrections() -> dict:
-    """Return the correction model, or {} if not enough data to activate."""
-    model = _build_cached()
+def get_corrections(site_id: str | None = None) -> dict:
+    """Return the correction model for a site, or {} if not enough data."""
+    model = _build_cached(site_id)
     return model if model.get("active") else {}
 
 
@@ -287,9 +292,17 @@ def apply(day: dict, corrections: dict) -> tuple[dict, list]:
     return corrected, badges
 
 
-def get_statistics() -> dict:
+def invalidate(site_id: str | None = None) -> None:
+    """Drop cached model(s) so the next request rebuilds from fresh data."""
+    if site_id:
+        _cache.pop(site_id, None)
+    else:
+        _cache.clear()
+
+
+def get_statistics(site_id: str | None = None) -> dict:
     """Stats for the microclimate dashboard section."""
-    model = _build_cached()
+    model = _build_cached(site_id)
     if not model.get("active"):
         return {
             "active": False,

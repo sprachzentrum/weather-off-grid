@@ -36,6 +36,11 @@
   header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;padding:4px 4px 18px}
   .title h1{font-size:clamp(1.3rem,4vw,1.9rem);font-weight:700}
   .title .sub{color:var(--dim);font-size:.82rem;margin-top:2px}
+  .title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .site-switch{background:var(--card-2);color:var(--txt);border:1px solid var(--line);
+    border-radius:10px;padding:6px 10px;font-size:.9rem;font-weight:600;cursor:pointer}
+  .gear{font-size:1.3rem;text-decoration:none;opacity:.8;transition:opacity .2s}
+  .gear:hover{opacity:1}
   .sun{display:flex;gap:18px;color:var(--dim);font-size:.85rem}
   .sun b{color:var(--txt);font-weight:600;display:block}
 
@@ -153,7 +158,11 @@
 <div id="app" class="hidden">
   <header>
     <div class="title">
-      <h1 id="station-name">Weather Off-Grid</h1>
+      <div class="title-row">
+        <h1 id="station-name">Weather Off-Grid</h1>
+        <select id="site-switch" class="site-switch hidden" aria-label="Standort"></select>
+        <a id="gear" href="settings.html" class="gear" title="Einstellungen" aria-label="Einstellungen">⚙️</a>
+      </div>
       <div class="sub" id="location-sub"></div>
     </div>
     <div class="sun">
@@ -240,7 +249,7 @@ const I18N = {
     wind_hours:"Std > {n} km/h",cumulative_rain:"7-Tage-Summe",autonomy:"Autonomie",hours:"Std",
     hit_rate:"Treffer Regen",temp_dev:"Ø Temp-Abweichung",wind_corr:"Wind-Korrektur",days_data:"Tage Daten",
     learning:"Lernphase",mc_learning:"Sammelt Daten … {n}/{m} Tage bis zur Aktivierung",
-    setup_title:"Einrichtung nötig",no_conn:"Keine Verbindung zum Backend – zeige zuletzt gespeicherte Daten.",
+    setup_title:"Einrichtung nötig",first_run:"Noch nicht eingerichtet",open_setup:"Jetzt einrichten",no_conn:"Keine Verbindung zum Backend – zeige zuletzt gespeicherte Daten.",
     offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)"},
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
@@ -255,7 +264,7 @@ const I18N = {
     wind_hours:"hrs > {n} km/h",cumulative_rain:"7-day total",autonomy:"Autonomy",hours:"hrs",
     hit_rate:"Rain hit rate",temp_dev:"Avg temp deviation",wind_corr:"Wind correction",days_data:"Days of data",
     learning:"Learning",mc_learning:"Collecting data … {n}/{m} days until activation",
-    setup_title:"Setup required",no_conn:"No backend connection – showing last saved data.",
+    setup_title:"Setup required",first_run:"Not configured yet",open_setup:"Set up now",no_conn:"No backend connection – showing last saved data.",
     offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)"},
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
@@ -270,7 +279,7 @@ const I18N = {
     wind_hours:"hrs > {n} km/h",cumulative_rain:"Total 7 días",autonomy:"Autonomía",hours:"hrs",
     hit_rate:"Acierto lluvia",temp_dev:"Desv. temp media",wind_corr:"Corrección viento",days_data:"Días de datos",
     learning:"Aprendiendo",mc_learning:"Recopilando datos … {n}/{m} días hasta activar",
-    setup_title:"Configuración necesaria",no_conn:"Sin conexión al backend – mostrando últimos datos.",
+    setup_title:"Configuración necesaria",first_run:"Aún sin configurar",open_setup:"Configurar ahora",no_conn:"Sin conexión al backend – mostrando últimos datos.",
     offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)"}
 };
 let LANG = "de";
@@ -282,38 +291,92 @@ const t = (k, vars={}) => {
 
 /* ============================================================
    Config + bootstrap
+   - Prefer live config from the backend (/api/settings/frontend),
+     fall back to config.js (offline / no backend). Resolves the active
+     site from the URL hash (#site_id) and supports multiple sites.
    ============================================================ */
-if (typeof CONFIG === "undefined"){
-  document.getElementById("setup").classList.remove("hidden");
-  throw new Error("CONFIG missing");
-}
-LANG = ["de","en","es"].includes(CONFIG.LANGUAGE) ? CONFIG.LANGUAGE : "de";
-document.documentElement.lang = LANG;
-document.getElementById("app").classList.remove("hidden");
-const API = (CONFIG.BACKEND_URL || "").replace(/\/$/, "");
-const REFRESH = Math.max(60, CONFIG.REFRESH_INTERVAL || 300);
 const $ = id => document.getElementById(id);
 const fmt = (v,d=1) => (v===null||v===undefined||v==="") ? "–" : (+v).toFixed(d).replace(".",",");
 const fmt0 = v => fmt(v,0);
 
-// apply static i18n on data-i18n nodes (preserve child elements like pills)
-document.querySelectorAll("[data-i18n]").forEach(el=>{
-  const k = el.getAttribute("data-i18n");
-  const s = I18N[LANG] && I18N[LANG][k];
-  if(!s) return;
-  if(el.childElementCount === 0){
-    el.textContent = s;
-  } else {
-    const textNode = Array.from(el.childNodes).find(n=>n.nodeType===3 && n.textContent.trim());
-    if(textNode) textNode.textContent = s+" ";
-    else el.insertBefore(document.createTextNode(s+" "), el.firstChild);
+let CFG = (typeof CONFIG !== "undefined") ? Object.assign({}, CONFIG) : {};
+let API = ((CFG.BACKEND_URL) || (location.origin + "/api")).replace(/\/$/, "");
+let REFRESH = Math.max(60, CFG.REFRESH_INTERVAL || 300);
+let SITES = [];     // [{site_id,name,pv_kwp,...}] from the backend
+let SITE = null;    // active site_id (null = backend default / legacy single-site)
+let SITECFG = {};   // config entry for the active site
+
+function applyI18n(){
+  document.querySelectorAll("[data-i18n]").forEach(el=>{
+    const k = el.getAttribute("data-i18n");
+    const s = I18N[LANG] && I18N[LANG][k];
+    if(!s) return;
+    if(el.childElementCount === 0){ el.textContent = s; }
+    else {
+      const tn = Array.from(el.childNodes).find(n=>n.nodeType===3 && n.textContent.trim());
+      if(tn) tn.textContent = s+" "; else el.insertBefore(document.createTextNode(s+" "), el.firstChild);
+    }
+  });
+}
+const siteParam = path => SITE ? path + (path.includes("?")?"&":"?") + "site=" + encodeURIComponent(SITE) : path;
+
+async function loadConfig(){
+  try{
+    const r = await fetch(API + "/settings/frontend", {cache:"no-store"});
+    if(r.ok){
+      const fc = await r.json();
+      const d = fc.display || {};
+      if(d.language) CFG.LANGUAGE = d.language;
+      if(d.refresh_interval) CFG.REFRESH_INTERVAL = d.refresh_interval;
+      if(d.units) CFG.UNITS = d.units;
+      SITES = fc.sites || [];
+      CFG._configured = fc.configured;
+      CFG._pinRequired = fc.admin_pin_required;
+      CFG._defaultSite = fc.default_site;
+      localStorage.setItem("wog:frontendcfg", JSON.stringify(fc));
+      return true;
+    }
+  }catch(e){ /* fall through to offline */ }
+  const cached = localStorage.getItem("wog:frontendcfg");
+  if(cached){ try{ const fc=JSON.parse(cached); SITES=fc.sites||[]; CFG._defaultSite=fc.default_site;
+    if(fc.display&&fc.display.language&&!CFG.LANGUAGE) CFG.LANGUAGE=fc.display.language; }catch(e){} }
+  return false;
+}
+
+function resolveSite(){
+  const hash = (location.hash||"").replace(/^#/,"");
+  const ids = SITES.map(s=>s.site_id);
+  if(ids.includes(hash)) SITE = hash;
+  else if(CFG._defaultSite && ids.includes(CFG._defaultSite)) SITE = CFG._defaultSite;
+  else SITE = ids[0] || null;
+  SITECFG = SITES.find(s=>s.site_id===SITE) || {};
+}
+
+function renderSiteSwitch(){
+  const sel = $("site-switch");
+  if(SITES.length > 1){
+    sel.innerHTML = SITES.map(s=>`<option value="${s.site_id}" ${s.site_id===SITE?"selected":""}>${s.name||s.site_id}</option>`).join("");
+    sel.classList.remove("hidden");
+    sel.onchange = () => { location.hash = sel.value; };
+  } else sel.classList.add("hidden");
+}
+
+function applyDisplay(){
+  LANG = ["de","en","es"].includes(CFG.LANGUAGE) ? CFG.LANGUAGE : "de";
+  document.documentElement.lang = LANG;
+  REFRESH = Math.max(60, CFG.REFRESH_INTERVAL || 300);
+  applyI18n();
+  $("station-name").textContent = SITECFG.name || CFG.STATION_NAME || "Weather Off-Grid";
+  if(SITECFG.latitude!=null && SITECFG.longitude!=null)
+    $("location-sub").textContent = `${(+SITECFG.latitude).toFixed(4)}, ${(+SITECFG.longitude).toFixed(4)}`;
+  $("auto-note").textContent = t("auto_refresh",{n:Math.round(REFRESH/60)});
+  if(CFG.SHOW_OFFGRID===false) $("sec-offgrid").classList.add("hidden");
+  if(CFG.SHOW_MICROCLIMATE===false) $("sec-microclimate").classList.add("hidden");
+  // First-run hint: backend reachable but no settings saved yet.
+  if(CFG._configured === false){
+    banner(`🚀 ${t("first_run")} — <a href="settings.html" style="color:inherit;font-weight:700">${t("open_setup")}</a>`, "warn", true);
   }
-});
-$("station-name").textContent = CONFIG.STATION_NAME || "Weather Off-Grid";
-$("auto-note").textContent = t("auto_refresh",{n:Math.round(REFRESH/60)});
-if(CONFIG.SHOW_BATTERY===false) $("sec-battery").classList.add("hidden");
-if(CONFIG.SHOW_OFFGRID===false) $("sec-offgrid").classList.add("hidden");
-if(CONFIG.SHOW_MICROCLIMATE===false) $("sec-microclimate").classList.add("hidden");
+}
 
 /* ============================================================
    Fetch helper with localStorage offline cache
@@ -444,7 +507,7 @@ function renderOffgrid(solar, energyToday, autonomy){
     <span class="v"><span class="dot ${d.rating}"></span>${fmt(d.psh)} PSH · ${fmt(d.estimated_kwh)} kWh</span></div>`).join("");
 
   const cumRain = (window._forecastDays||[]).reduce((s,d)=>s+(d.precip_sum||0),0);
-  const windThr = CONFIG.WIND_THRESHOLD_KMH||10;
+  const windThr = SITECFG.wind_threshold_kmh || CFG.WIND_THRESHOLD_KMH || 10;
   // wind hours per day estimated from hourly (next 24h only available) -> show daily max instead
   const windRows = (window._forecastDays||[]).slice(0,7).map(d=>`<div class="og-row">
     <span class="d">${weekday(d.date)} ${d.date.slice(8,10)}.</span>
@@ -528,21 +591,24 @@ function renderCharts(hist, bat){
 /* ============================================================
    Orchestration
    ============================================================ */
-function banner(msg,type){ const b=$("banner"); b.textContent=msg; b.className="banner show "+type; }
-function clearBanner(){ $("banner").className="banner"; }
+let _firstRunBanner = false;
+function banner(msg,type,html=false){ const b=$("banner"); if(html) b.innerHTML=msg; else b.textContent=msg; b.className="banner show "+type; if(type==="warn"&&html) _firstRunBanner=true; }
+function clearBanner(){ if(_firstRunBanner) return; $("banner").className="banner"; }
 
 async function refresh(){
-  const q = `?pv_kwp=${CONFIG.PV_KWP||3.6}&pv_eff=${CONFIG.PV_EFFICIENCY||0.75}`;
+  const pv = SITECFG.pv_kwp || CFG.PV_KWP || 3.6;
+  const eff = SITECFG.pv_efficiency || CFG.PV_EFFICIENCY || 0.75;
+  const cap = SITECFG.battery_capacity_kwh || CFG.BATTERY_CAPACITY_KWH || 9.6;
   const calls = {
-    current: api("/current"),
-    forecast: api("/forecast"),
-    hourly: api("/forecast/hourly"),
-    solar: api("/forecast/solar"+q),
-    history: api("/history?days=7"),
-    battery: api("/battery?days=7"),
-    energyToday: api("/energy/today"),
-    autonomy: api(`/energy/autonomy?capacity_kwh=${CONFIG.BATTERY_CAPACITY_KWH||9.6}`),
-    microclimate: api("/microclimate"),
+    current: api(siteParam("/current")),
+    forecast: api(siteParam("/forecast")),
+    hourly: api(siteParam("/forecast/hourly")),
+    solar: api(siteParam(`/forecast/solar?pv_kwp=${pv}&pv_eff=${eff}`)),
+    history: api(siteParam("/history?days=7")),
+    battery: api(siteParam("/battery?days=7")),
+    energyToday: api(siteParam("/energy/today")),
+    autonomy: api(siteParam(`/energy/autonomy?capacity_kwh=${cap}`)),
+    microclimate: api(siteParam("/microclimate")),
   };
   const results = {}; let anyCached=false, anyOk=false, oldest=Date.now();
   for(const [key,p] of Object.entries(calls)){
@@ -551,26 +617,50 @@ async function refresh(){
   }
   if(!anyOk){ banner(t("no_conn"),"err"); return; }
 
-  // Header sun + updated
   if(results.current){
     const c=results.current;
     if(c.sun){ $("sunrise").textContent=c.sun.sunrise?hhmm(c.sun.sunrise):"–"; $("sunset").textContent=c.sun.sunset?hhmm(c.sun.sunset):"–"; }
     $("updated").textContent = c.updated ? hhmm(c.updated) : new Date().toLocaleTimeString(LANG,{hour:"2-digit",minute:"2-digit"});
-    if(CONFIG.SHOW_BATTERY!==false) renderBattery(c);
+    if(CFG.SHOW_BATTERY!==false) renderBattery(c);
     renderCurrent(c);
   }
   if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
   if(results.hourly) renderHourly(results.hourly);
   if(results.history) renderCharts(results.history, results.battery);
-  if(CONFIG.SHOW_OFFGRID!==false && results.solar) renderOffgrid(results.solar, results.energyToday, results.autonomy);
-  if(CONFIG.SHOW_MICROCLIMATE!==false && results.microclimate!==null) renderMicroclimate(results.microclimate);
+  if(CFG.SHOW_OFFGRID!==false && results.solar) renderOffgrid(results.solar, results.energyToday, results.autonomy);
+  if(CFG.SHOW_MICROCLIMATE!==false && results.microclimate!==null) renderMicroclimate(results.microclimate);
 
-  if(anyCached){ const mins=Math.round((Date.now()-oldest)/60000); banner(`📴 ${t("offline")} ${isFinite(mins)?mins+" min":""}`,"warn"); }
+  if(anyCached && !_firstRunBanner){ const mins=Math.round((Date.now()-oldest)/60000); banner(`📴 ${t("offline")} ${isFinite(mins)?mins+" min":""}`,"warn"); }
   else clearBanner();
 }
 
-refresh();
-setInterval(refresh, REFRESH*1000);
+/* ── Init: resolve config + site, then start the refresh loop ───────────── */
+let _timer = null;
+function switchSite(){
+  resolveSite();
+  renderSiteSwitch();
+  applyDisplay();
+  for(const k in charts){ try{ charts[k].destroy(); }catch(e){} }
+  refresh();
+}
+async function init(){
+  const apiOk = await loadConfig();
+  if(!apiOk && typeof CONFIG === "undefined" && SITES.length===0){
+    $("setup").classList.remove("hidden");   // no backend and no config.js
+    return;
+  }
+  if(SITES.length === 0){
+    // Legacy single-site from config.js (no multi-site backend reachable).
+    SITES = [{ site_id:null, name:CFG.STATION_NAME, latitude:CFG.LATITUDE, longitude:CFG.LONGITUDE,
+      pv_kwp:CFG.PV_KWP, pv_efficiency:CFG.PV_EFFICIENCY, battery_capacity_kwh:CFG.BATTERY_CAPACITY_KWH }];
+  }
+  $("app").classList.remove("hidden");
+  switchSite();
+  window.addEventListener("hashchange", switchSite);
+  if(_timer) clearInterval(_timer);
+  _timer = setInterval(refresh, REFRESH*1000);
+}
+init();
 
 // Register service worker (PWA)
 if("serviceWorker" in navigator){

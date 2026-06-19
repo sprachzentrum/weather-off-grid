@@ -75,14 +75,21 @@ CURRENT_VARS = [
 
 async def fetch_forecast(
     client: httpx.AsyncClient,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    timezone_name: str | None = None,
     forecast_days: int = 7,
     past_days: int = 7,
 ) -> dict:
-    """Fetch the raw Open-Meteo forecast JSON (metric units, local timezone)."""
+    """Fetch the raw Open-Meteo forecast JSON (metric units, local timezone).
+
+    Coordinates default to the .env location for backward compatibility, but the
+    site-aware callers pass each site's own latitude/longitude/timezone.
+    """
     params = {
-        "latitude": config.LATITUDE,
-        "longitude": config.LONGITUDE,
-        "timezone": config.TIMEZONE,
+        "latitude": config.LATITUDE if latitude is None else latitude,
+        "longitude": config.LONGITUDE if longitude is None else longitude,
+        "timezone": timezone_name or config.TIMEZONE,
         "forecast_days": forecast_days,
         "past_days": past_days,
         "wind_speed_unit": "kmh",
@@ -96,7 +103,7 @@ async def fetch_forecast(
     return resp.json()
 
 
-def archive_daily(raw: dict) -> int:
+def archive_daily(raw: dict, site_id: str = "default") -> int:
     """
     Store each day of the current daily forecast as a snapshot in `forecasts`.
     Tagged by target_date + lead_days so we can later pair forecast with reality.
@@ -130,7 +137,7 @@ def archive_daily(raw: dict) -> int:
             config.BUCKET_FORECASTS,
             "forecast_daily",
             fields,
-            tags={"target_date": day_iso, "lead_days": str(lead)},
+            tags={"target_date": day_iso, "lead_days": str(lead), "site_id": site_id},
             ts=datetime(target.year, target.month, target.day, tzinfo=timezone.utc),
         )
         written += 1
@@ -144,16 +151,20 @@ def _at(group: dict, key: str, idx: int):
     return None
 
 
-async def run_poller() -> None:
-    log.info("openmeteo archiver started (every %ds)", config.OPENMETEO_POLL_INTERVAL)
+async def run_poller(site: dict) -> None:
+    """Per-site archiver: snapshots that site's daily forecast into `forecasts`."""
+    sid = site["site_id"]
+    log.info("[%s] openmeteo archiver started (every %ds)", sid, config.OPENMETEO_POLL_INTERVAL)
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                raw = await fetch_forecast(client)
-                n = archive_daily(raw)
-                log.info("archived %d daily forecast snapshots", n)
+                raw = await fetch_forecast(
+                    client, site.get("latitude"), site.get("longitude"), site.get("timezone")
+                )
+                n = archive_daily(raw, sid)
+                log.info("[%s] archived %d daily forecast snapshots", sid, n)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                log.warning("openmeteo archive failed: %s", exc)
+                log.warning("[%s] openmeteo archive failed: %s", sid, exc)
             await asyncio.sleep(config.OPENMETEO_POLL_INTERVAL)

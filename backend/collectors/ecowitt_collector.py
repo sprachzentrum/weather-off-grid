@@ -19,6 +19,7 @@ from fastapi import APIRouter, Request
 
 import config
 import db
+import settings_store
 
 log = logging.getLogger("ecowitt")
 router = APIRouter()
@@ -120,27 +121,31 @@ def _none_round(fn, value, ndigits: int = 2):
 
 @router.post("/api/ecowitt/webhook")
 async def ecowitt_webhook(request: Request):
-    """Receive a station push, normalise it and write it to InfluxDB."""
+    """Receive a station push, route it to a site by MAC, write it to InfluxDB."""
     form = dict((await request.form()))
     fields = parse_webhook_form(form)
     if not fields:
         log.warning("webhook payload had no usable fields: %s", list(form.keys()))
         return {"status": "ignored", "reason": "no usable fields"}
 
-    station = form.get("PASSKEY") or form.get("stationtype") or "ecowitt"
+    # Identify which site this station belongs to (by MAC, else PASSKEY hash).
+    mac = form.get("MAC") or form.get("mac") or form.get("ID")
+    site = settings_store.site_for_ecowitt(mac, form.get("PASSKEY"))
+    site_id = site["site_id"] if site else "default"
+    station = form.get("PASSKEY") or form.get("stationtype") or mac or "ecowitt"
     try:
         db.write_point(
             config.BUCKET_WEATHER,
             "station",
             fields,
-            tags={"source": "webhook", "station": station[:24]},
+            tags={"source": "webhook", "station": str(station)[:24], "site_id": site_id},
         )
     except Exception as exc:  # noqa: BLE001
         log.error("influx write failed: %s", exc)
         return {"status": "error", "detail": str(exc)}
 
-    log.info("webhook stored %d fields", len(fields))
-    return {"status": "ok", "fields": len(fields)}
+    log.info("webhook stored %d fields for site=%s", len(fields), site_id)
+    return {"status": "ok", "fields": len(fields), "site_id": site_id}
 
 
 # ── API poller path ────────────────────────────────────────────────────────
@@ -183,11 +188,11 @@ def parse_api_response(data: dict) -> dict:
     return {k: v for k, v in fields.items() if v is not None}
 
 
-async def poll_once(client: httpx.AsyncClient) -> bool:
-    params = {
-        "application_key": config.ECOWITT_APP_KEY,
-        "api_key": config.ECOWITT_API_KEY,
-        "mac": config.ECOWITT_MAC,
+def _ecowitt_params(eco: dict) -> dict:
+    return {
+        "application_key": eco.get("app_key"),
+        "api_key": eco.get("api_key"),
+        "mac": eco.get("mac"),
         "call_back": "all",
         "temp_unitid": 1,        # Celsius
         "pressure_unitid": 3,    # hPa
@@ -195,11 +200,20 @@ async def poll_once(client: httpx.AsyncClient) -> bool:
         "rainfall_unitid": 12,   # mm
         "solar_irradiance_unitid": 16,  # W/m²
     }
-    resp = await client.get(ECOWITT_API_URL, params=params, timeout=20)
+
+
+def _ecowitt_ready(site: dict) -> bool:
+    eco = site.get("ecowitt") or {}
+    return bool(eco.get("enabled") and eco.get("app_key") and eco.get("api_key") and eco.get("mac"))
+
+
+async def poll_once(client: httpx.AsyncClient, site: dict) -> bool:
+    eco = site.get("ecowitt") or {}
+    resp = await client.get(ECOWITT_API_URL, params=_ecowitt_params(eco), timeout=20)
     resp.raise_for_status()
     body = resp.json()
     if body.get("code") != 0:
-        log.warning("ecowitt api error: %s", body.get("msg"))
+        log.warning("[%s] ecowitt api error: %s", site["site_id"], body.get("msg"))
         return False
 
     fields = parse_api_response(body.get("data") or {})
@@ -209,24 +223,43 @@ async def poll_once(client: httpx.AsyncClient) -> bool:
         config.BUCKET_WEATHER,
         "station",
         fields,
-        tags={"source": "api", "station": config.ECOWITT_MAC},
+        tags={"source": "api", "station": eco.get("mac", ""), "site_id": site["site_id"]},
     )
-    log.info("api poll stored %d fields", len(fields))
+    log.info("[%s] api poll stored %d fields", site["site_id"], len(fields))
     return True
 
 
-async def run_poller() -> None:
-    """Background fallback poller. No-op when API keys are not configured."""
-    if not config.ecowitt_enabled():
-        log.info("ecowitt API poller disabled (no keys) - webhook still active")
+async def test_connection(site: dict) -> dict:
+    """Live connectivity check used by POST /api/settings/test."""
+    if not _ecowitt_ready(site):
+        return {"ok": False, "detail": "Ecowitt nicht konfiguriert (Keys/MAC fehlen)"}
+    eco = site.get("ecowitt") or {}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(ECOWITT_API_URL, params=_ecowitt_params(eco), timeout=15)
+            resp.raise_for_status()
+            body = resp.json()
+        if body.get("code") != 0:
+            return {"ok": False, "detail": f"Ecowitt: {body.get('msg')}"}
+        fields = parse_api_response(body.get("data") or {})
+        return {"ok": True, "detail": f"OK - {len(fields)} Messwerte empfangen"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "detail": str(exc)}
+
+
+async def run_poller(site: dict) -> None:
+    """Per-site background fallback poller. No-op when not configured."""
+    sid = site["site_id"]
+    if not _ecowitt_ready(site):
+        log.info("[%s] ecowitt API poller disabled (webhook still active)", sid)
         return
-    log.info("ecowitt API poller started (every %ds)", config.ECOWITT_POLL_INTERVAL)
+    log.info("[%s] ecowitt API poller started (every %ds)", sid, config.ECOWITT_POLL_INTERVAL)
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                await poll_once(client)
+                await poll_once(client, site)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                log.warning("ecowitt poll failed: %s", exc)
+                log.warning("[%s] ecowitt poll failed: %s", sid, exc)
             await asyncio.sleep(config.ECOWITT_POLL_INTERVAL)

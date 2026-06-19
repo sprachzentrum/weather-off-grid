@@ -106,16 +106,17 @@ def extract_fields(raw: dict) -> dict:
 class GrowattSession:
     """Holds a logged-in growattServer client and the resolved plant/inverter ids."""
 
-    def __init__(self) -> None:
+    def __init__(self, creds: dict) -> None:
         self.api = None
-        self.plant_id: str | None = config.GROWATT_PLANT_ID or None
-        self.inverter_sn: str | None = config.GROWATT_INVERTER_SN or None
+        self.creds = creds
+        self.plant_id: str | None = creds.get("plant_id") or None
+        self.inverter_sn: str | None = creds.get("inverter_sn") or None
 
     def login(self) -> None:
         import growattServer  # imported lazily so the lib is optional
 
         self.api = growattServer.GrowattApi(add_random_user_id=True)
-        result = self.api.login(config.GROWATT_USERNAME, config.GROWATT_PASSWORD)
+        result = self.api.login(self.creds.get("username"), self.creds.get("password"))
         if not result or not result.get("success", True):
             raise RuntimeError(f"growatt login failed: {result}")
 
@@ -154,44 +155,71 @@ class GrowattSession:
         return merged
 
 
-def _poll_blocking(session: GrowattSession | None) -> tuple[GrowattSession, dict]:
+def _growatt_ready(site: dict) -> bool:
+    gw = site.get("growatt") or {}
+    return bool(gw.get("enabled") and gw.get("username") and gw.get("password"))
+
+
+def _poll_blocking(session: GrowattSession | None, creds: dict) -> tuple[GrowattSession, dict]:
     """Synchronous poll run in a worker thread; (re)logs in as needed."""
     if session is None or session.api is None:
-        session = GrowattSession()
+        session = GrowattSession(creds)
         session.login()
     try:
         raw = session.fetch()
     except Exception:  # noqa: BLE001 - likely an expired session, retry once
-        session = GrowattSession()
+        session = GrowattSession(creds)
         session.login()
         raw = session.fetch()
     return session, raw
 
 
-async def run_poller() -> None:
-    if not config.growatt_enabled():
-        log.info("growatt collector disabled (no GROWATT_USERNAME) - skipping")
+def _test_blocking(creds: dict) -> dict:
+    try:
+        session = GrowattSession(creds)
+        session.login()
+        raw = session.fetch()
+        fields = extract_fields(raw)
+        if fields:
+            return {"ok": True, "detail": f"OK - SOC {fields.get('battery_soc', '?')}%, {len(fields)} Felder"}
+        return {"ok": True, "detail": "Login OK, aber keine Inverter-Felder erkannt"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "detail": str(exc)}
+
+
+async def test_connection(site: dict) -> dict:
+    """Live login + fetch test used by POST /api/settings/test."""
+    if not _growatt_ready(site):
+        return {"ok": False, "detail": "Growatt nicht konfiguriert (Login fehlt)"}
+    return await asyncio.to_thread(_test_blocking, site.get("growatt") or {})
+
+
+async def run_poller(site: dict) -> None:
+    sid = site["site_id"]
+    if not _growatt_ready(site):
+        log.info("[%s] growatt collector disabled - skipping", sid)
         return
-    log.info("growatt collector started (every %ds)", config.GROWATT_POLL_INTERVAL)
+    creds = site.get("growatt") or {}
+    log.info("[%s] growatt collector started (every %ds)", sid, config.GROWATT_POLL_INTERVAL)
 
     session: GrowattSession | None = None
     while True:
         try:
-            session, raw = await asyncio.to_thread(_poll_blocking, session)
+            session, raw = await asyncio.to_thread(_poll_blocking, session, creds)
             fields = extract_fields(raw)
             if fields:
                 db.write_point(
                     config.BUCKET_ENERGY,
                     "energy",
                     fields,
-                    tags={"inverter": session.inverter_sn or "unknown"},
+                    tags={"inverter": session.inverter_sn or "unknown", "site_id": sid},
                 )
-                log.info("growatt stored %d fields (soc=%s)", len(fields), fields.get("battery_soc"))
+                log.info("[%s] growatt stored %d fields (soc=%s)", sid, len(fields), fields.get("battery_soc"))
             else:
-                log.warning("growatt poll returned no recognisable fields")
+                log.warning("[%s] growatt poll returned no recognisable fields", sid)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            log.warning("growatt poll failed: %s", exc)
+            log.warning("[%s] growatt poll failed: %s", sid, exc)
             session = None  # force re-login next round
         await asyncio.sleep(config.GROWATT_POLL_INTERVAL)

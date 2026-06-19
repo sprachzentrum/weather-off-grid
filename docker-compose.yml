@@ -32,10 +32,15 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     env_file:
       - .env
+    environment:
+      # Persisted settings.json lives here (settings-data volume below).
+      - DATA_DIR=/app/data
     depends_on:
       influxdb:
         condition: service_healthy
     volumes:
+      # Persisted multi-site settings (settings.json) - survives restarts.
+      - settings-data:/app/data
       # Historical-import CSVs and the frontend (served as static files at /app).
       - ./import:/app/import
       - ./frontend:/app/static
@@ -43,3 +48,4 @@ services:
 
 volumes:
   influxdb-data:
+  settings-data:

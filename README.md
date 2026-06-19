@@ -113,6 +113,31 @@ docker compose exec backend python import_historical.py --ecowitt import/ecowitt
 docker compose exec backend python import_historical.py --openmeteo --years 3
 ```
 
+## Einstellungen & Multi-Standort
+
+Ab Version 1.1 muss die `.env` nicht mehr von Hand editiert werden: Über die
+**Settings-Seite** (`/settings.html`, Zahnrad-Icon im Header) lassen sich alle
+Werte im Browser bearbeiten. Sie werden persistent in `data/settings.json`
+gespeichert (Docker-Volume `settings-data`).
+
+- **Setup-Wizard** beim ersten Start (Standort → Ecowitt → Growatt → Energie),
+  jeder Schritt mit "Verbindung testen".
+- **Mehrere Standorte**: Jeder Standort hat eigene Hardware, eigene Daten,
+  eigene Mikroklima-Korrektur. Umschalten über das Dropdown im Header
+  (`/#standort-id`). Standorte ohne Hardware sind erlaubt (nur Open-Meteo).
+- **Hot-Reload**: Änderungen übernimmt das Backend ohne Neustart (Collectors
+  werden pro Standort neu gestartet).
+- **PIN-Schutz**: Setze `ADMIN_PIN` in der `.env`, um die Settings-Seite zu
+  schützen. Leer = offen (nur fürs lokale Netz gedacht).
+- Beim ersten Start ohne `settings.json` werden die `.env`-Werte als
+  Default-Standort übernommen - bestehende Single-Site-Installationen laufen
+  unverändert weiter.
+
+Jeder Daten-Endpoint akzeptiert `?site=<id>` (z. B. `/api/current?site=el-durazno`);
+ohne Parameter wird der Default-Standort verwendet. `config.js` ist optional -
+ist das Backend erreichbar, holt das Frontend seine Konfiguration über
+`GET /api/settings/frontend`; `config.js` dient nur noch als Offline-Fallback.
+
 ## Konfigurationsreferenz
 
 ### Backend (.env)

@@ -119,15 +119,25 @@ def query(flux: str) -> list:
     return get_client().query_api().query(flux, org=config.INFLUXDB_ORG)
 
 
-def latest_fields(bucket: str, measurement: str, since: str = "-2h") -> dict[str, Any]:
+def _site_filter(site_id: str | None) -> str:
+    """Optional Flux line restricting to one site. Empty when site_id is None."""
+    if not site_id:
+        return ""
+    return f'\n      |> filter(fn: (r) => r.site_id == "{site_id}")'
+
+
+def latest_fields(
+    bucket: str, measurement: str, site_id: str | None = None, since: str = "-2h"
+) -> dict[str, Any]:
     """
     Return the most recent value of every field of a measurement as a flat dict.
-    Empty dict if there is no data in the window.
+    Empty dict if there is no data in the window. Restricted to one site when
+    site_id is given.
     """
     flux = f'''
     from(bucket: "{bucket}")
       |> range(start: {since})
-      |> filter(fn: (r) => r._measurement == "{measurement}")
+      |> filter(fn: (r) => r._measurement == "{measurement}"){_site_filter(site_id)}
       |> last()
     '''
     out: dict[str, Any] = {}
@@ -142,18 +152,20 @@ def series(
     bucket: str,
     measurement: str,
     fields: list[str],
+    site_id: str | None = None,
     days: int = 7,
     every: str = "1h",
 ) -> dict[str, list]:
     """
     Aggregated time series for charts: returns {"time": [...], field: [...], ...}
     using mean aggregation over `every` windows for the last `days` days.
+    Restricted to one site when site_id is given.
     """
     field_filter = " or ".join(f'r._field == "{f}"' for f in fields)
     flux = f'''
     from(bucket: "{bucket}")
       |> range(start: -{days}d)
-      |> filter(fn: (r) => r._measurement == "{measurement}")
+      |> filter(fn: (r) => r._measurement == "{measurement}"){_site_filter(site_id)}
       |> filter(fn: (r) => {field_filter})
       |> aggregateWindow(every: {every}, fn: mean, createEmpty: false)
       |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
@@ -169,6 +181,26 @@ def series(
             for f in fields:
                 result[f].append(values.get(f))
     return result
+
+
+def count_points(bucket: str, site_id: str | None = None, days: int = 365) -> int:
+    """Approximate number of stored points in a bucket (optionally per site)."""
+    flux = f'''
+    from(bucket: "{bucket}")
+      |> range(start: -{days}d){_site_filter(site_id)}
+      |> filter(fn: (r) => exists r._value)
+      |> count()
+      |> sum()
+    '''
+    try:
+        total = 0
+        for table in query(flux):
+            for record in table.records:
+                total += int(record.get_value() or 0)
+        return total
+    except Exception as exc:  # noqa: BLE001
+        log.debug("count_points failed: %s", exc)
+        return 0
 
 
 def close() -> None:

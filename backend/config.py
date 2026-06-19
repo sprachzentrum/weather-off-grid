@@ -71,6 +71,12 @@ TIMEZONE = _get("TIMEZONE", "America/Argentina/Cordoba")
 # ── Server ────────────────────────────────────────────────────────────────
 BACKEND_PORT = _get_int("BACKEND_PORT", 8000)
 
+# ── Admin / settings ──────────────────────────────────────────────────────
+# Empty ADMIN_PIN = settings page is open (fine for trusted local networks).
+ADMIN_PIN = _get("ADMIN_PIN")
+# Where the persisted settings.json lives (mounted as a docker volume).
+DATA_DIR = _get("DATA_DIR", "data")
+
 # ── Polling intervals (seconds) ───────────────────────────────────────────
 ECOWITT_POLL_INTERVAL = _get_int("ECOWITT_POLL_INTERVAL", 300)
 GROWATT_POLL_INTERVAL = _get_int("GROWATT_POLL_INTERVAL", 300)

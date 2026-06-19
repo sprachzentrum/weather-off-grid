@@ -1,11 +1,11 @@
 """
 REST API endpoints consumed by the PWA frontend and the iOS widget.
 
-Weather/energy "current" and "history" data come from InfluxDB (filled by the
-collectors). Forecast data comes live from Open-Meteo via the shared client in
-openmeteo_collector, with a short in-process cache so repeated dashboard loads
-don't hammer the upstream API. The microclimate model (forecast.microclimate)
-adjusts the raw forecast once enough local history exists.
+Every data endpoint takes an optional ?site=<site_id> query parameter. When
+omitted, the default site (settings_store.default_site_id) is used. Weather and
+energy "current"/"history" data come from InfluxDB filtered by the site's
+site_id tag; forecast data comes live from Open-Meteo using the site's own
+coordinates (cached per site). The microclimate model is computed per site.
 """
 from __future__ import annotations
 
@@ -14,17 +14,18 @@ import time
 from datetime import date, datetime
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 import config
 import db
+import settings_store
 from collectors import openmeteo_collector as om
 from forecast import microclimate
 
 log = logging.getLogger("api")
 router = APIRouter(prefix="/api")
 
-# ── Shared Open-Meteo client + tiny TTL cache ──────────────────────────────
+# ── Shared Open-Meteo client + per-site TTL cache ──────────────────────────
 _client: httpx.AsyncClient | None = None
 _cache: dict[str, tuple[float, dict]] = {}
 _CACHE_TTL = 300  # seconds
@@ -37,44 +38,64 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def _forecast_raw() -> dict:
-    """Cached raw Open-Meteo forecast (current + hourly + daily, ±7 days)."""
+def invalidate_cache() -> None:
+    """Drop the per-site forecast cache (called after settings change)."""
+    _cache.clear()
+
+
+def _resolve_site(site_id: str | None) -> dict:
+    site = settings_store.get_site(site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="no sites configured")
+    return site
+
+
+async def _forecast_raw(site: dict) -> dict:
+    """Cached raw Open-Meteo forecast for a site (current + hourly + daily)."""
+    sid = site["site_id"]
     now = time.monotonic()
-    hit = _cache.get("forecast")
+    hit = _cache.get(sid)
     if hit and now - hit[0] < _CACHE_TTL:
         return hit[1]
-    raw = await om.fetch_forecast(_get_client())
-    _cache["forecast"] = (now, raw)
+    raw = await om.fetch_forecast(
+        _get_client(), site.get("latitude"), site.get("longitude"), site.get("timezone")
+    )
+    _cache[sid] = (now, raw)
     return raw
 
 
 def _today_iso(raw: dict) -> str:
-    """Station-local 'today' derived from the Open-Meteo current timestamp."""
     cur = (raw.get("current") or {}).get("time")
-    if cur:
-        return cur[:10]
-    return date.today().isoformat()
+    return cur[:10] if cur else date.today().isoformat()
 
 
 def _round(value, ndigits: int = 1):
     return round(value, ndigits) if isinstance(value, (int, float)) else value
 
 
+# ── /api/sites ─────────────────────────────────────────────────────────────
+@router.get("/sites")
+async def list_sites():
+    """All configured sites (public fields only) + the default site id."""
+    fc = settings_store.frontend_config()
+    return {"sites": fc["sites"], "default_site": fc["default_site"]}
+
+
 # ── /api/current ───────────────────────────────────────────────────────────
 @router.get("/current")
-async def current():
-    """Latest measured weather (Ecowitt) + battery (Growatt), Open-Meteo fallback."""
-    weather = db.latest_fields(config.BUCKET_WEATHER, "station")
-    energy = db.latest_fields(config.BUCKET_ENERGY, "energy")
+async def current(site: str | None = Query(None)):
+    s = _resolve_site(site)
+    sid = s["site_id"]
+    weather = db.latest_fields(config.BUCKET_WEATHER, "station", site_id=sid)
+    energy = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=sid)
 
     raw = {}
     try:
-        raw = await _forecast_raw()
+        raw = await _forecast_raw(s)
     except Exception as exc:  # noqa: BLE001
-        log.warning("forecast fetch for /current failed: %s", exc)
+        log.warning("[%s] forecast fetch for /current failed: %s", sid, exc)
 
     cur = raw.get("current") or {}
-    # Fall back to Open-Meteo current values where the station has no data.
     if not weather:
         weather = {
             "temperature_outdoor": cur.get("temperature_2m"),
@@ -95,7 +116,6 @@ async def current():
     if isinstance(updated, datetime):
         updated = updated.isoformat()
 
-    # Sunrise/sunset for today from the daily block.
     daily = raw.get("daily") or {}
     sunrise = sunset = None
     if daily.get("time"):
@@ -114,7 +134,8 @@ async def current():
             battery["updated"] = et.isoformat()
 
     return {
-        "station_name": None,  # frontend uses CONFIG.STATION_NAME
+        "site_id": sid,
+        "station_name": s.get("name"),
         "updated": updated,
         "weather": weather,
         "battery": battery,
@@ -126,14 +147,14 @@ async def current():
 
 # ── /api/forecast ──────────────────────────────────────────────────────────
 @router.get("/forecast")
-async def forecast():
-    """7-day daily forecast with microclimate correction badges where available."""
-    raw = await _forecast_raw()
+async def forecast(site: str | None = Query(None)):
+    s = _resolve_site(site)
+    raw = await _forecast_raw(s)
     daily = raw.get("daily") or {}
     times = daily.get("time") or []
     today = _today_iso(raw)
 
-    corrections = microclimate.get_corrections()  # {} until enough data
+    corrections = microclimate.get_corrections(s["site_id"])
     days = []
     for i, day_iso in enumerate(times):
         if day_iso < today:
@@ -155,6 +176,7 @@ async def forecast():
         days.append(base)
 
     return {
+        "site_id": s["site_id"],
         "days": days,
         "microclimate": {
             "active": bool(corrections),
@@ -165,9 +187,9 @@ async def forecast():
 
 # ── /api/forecast/hourly ───────────────────────────────────────────────────
 @router.get("/forecast/hourly")
-async def forecast_hourly(hours: int = Query(24, ge=1, le=72)):
-    """Next N hours (default 24) from the hourly block."""
-    raw = await _forecast_raw()
+async def forecast_hourly(site: str | None = Query(None), hours: int = Query(24, ge=1, le=72)):
+    s = _resolve_site(site)
+    raw = await _forecast_raw(s)
     h = raw.get("hourly") or {}
     times = h.get("time") or []
     now = (raw.get("current") or {}).get("time", "")
@@ -185,32 +207,33 @@ async def forecast_hourly(hours: int = Query(24, ge=1, le=72)):
             "wind_dir": om._at(h, "winddirection_10m", i),
             "is_day": om._at(h, "is_day", i),
         })
-    return {"hours": out}
+    return {"site_id": s["site_id"], "hours": out}
 
 
 # ── /api/forecast/solar (PSH, not sunshine_duration!) ──────────────────────
 @router.get("/forecast/solar")
 async def forecast_solar(
+    site: str | None = Query(None),
     pv_kwp: float = Query(None, ge=0),
     pv_eff: float = Query(None, ge=0, le=1),
 ):
     """
     Per-day solar yield estimate from Peak Sun Hours.
 
-    PSH = sum(shortwave_radiation[W/m²] over the day) / 1000.
-    We deliberately do NOT use Open-Meteo's `sunshine_duration`, which only
-    counts hours of direct beam > 120 W/m² and badly overestimates usable yield.
+    PSH = sum(shortwave_radiation[W/m²] over the day) / 1000. We deliberately do
+    NOT use Open-Meteo's `sunshine_duration`, which badly overestimates usable
+    yield. Defaults for pv_kwp/pv_eff come from the site, overridable per request.
     """
-    pv_kwp = config.PV_KWP if pv_kwp is None else pv_kwp
-    pv_eff = config.PV_EFFICIENCY if pv_eff is None else pv_eff
+    s = _resolve_site(site)
+    pv_kwp = s.get("pv_kwp", config.PV_KWP) if pv_kwp is None else pv_kwp
+    pv_eff = s.get("pv_efficiency", config.PV_EFFICIENCY) if pv_eff is None else pv_eff
 
-    raw = await _forecast_raw()
+    raw = await _forecast_raw(s)
     h = raw.get("hourly") or {}
     times = h.get("time") or []
     radiation = h.get("shortwave_radiation") or []
     today = _today_iso(raw)
 
-    # Bucket hourly GHI by calendar day.
     per_day: dict[str, list[float]] = {}
     for i, t in enumerate(times):
         day = t[:10]
@@ -225,7 +248,7 @@ async def forecast_solar(
     for day in sorted(per_day):
         ghi = per_day[day]
         psh = sum(ghi) / 1000.0
-        production_window = sum(1 for v in ghi if v > 100)  # hours actually producing
+        production_window = sum(1 for v in ghi if v > 100)
         estimated_kwh = psh * pv_kwp * pv_eff
         days.append({
             "date": day,
@@ -235,30 +258,22 @@ async def forecast_solar(
             "rating": "good" if psh > 4 else "fair" if psh >= 2 else "poor",
         })
 
-    return {
-        "pv_kwp": pv_kwp,
-        "pv_efficiency": pv_eff,
-        "days": days[:7],
-    }
+    return {"site_id": s["site_id"], "pv_kwp": pv_kwp, "pv_efficiency": pv_eff, "days": days[:7]}
 
 
 # ── /api/history ───────────────────────────────────────────────────────────
 @router.get("/history")
-async def history(days: int = Query(7, ge=1, le=90)):
-    """Measured weather time series for the charts."""
+async def history(site: str | None = Query(None), days: int = Query(7, ge=1, le=90)):
+    s = _resolve_site(site)
     every = "1h" if days <= 14 else "6h"
     return db.series(
         config.BUCKET_WEATHER,
         "station",
         [
-            "temperature_outdoor",
-            "wind_speed",
-            "wind_gust",
-            "rain_rate",
-            "rain_daily",
-            "pressure_relative",
-            "solar_radiation",
+            "temperature_outdoor", "wind_speed", "wind_gust", "rain_rate",
+            "rain_daily", "pressure_relative", "solar_radiation",
         ],
+        site_id=s["site_id"],
         days=days,
         every=every,
     )
@@ -266,19 +281,21 @@ async def history(days: int = Query(7, ge=1, le=90)):
 
 # ── /api/battery ───────────────────────────────────────────────────────────
 @router.get("/battery")
-async def battery(days: int = Query(7, ge=1, le=90)):
-    """Battery SOC + PV + load time series, plus the latest snapshot."""
-    latest = db.latest_fields(config.BUCKET_ENERGY, "energy")
+async def battery(site: str | None = Query(None), days: int = Query(7, ge=1, le=90)):
+    s = _resolve_site(site)
+    sid = s["site_id"]
+    latest = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=sid)
     latest.pop("_time", None)
     series = db.series(
         config.BUCKET_ENERGY,
         "energy",
         ["battery_soc", "pv_power", "load_power", "battery_power"],
+        site_id=sid,
         days=days,
         every="1h" if days <= 14 else "6h",
     )
     return {
-        # Flat keys kept for the iOS widget convenience.
+        "site_id": sid,
         "soc": _round(latest.get("battery_soc")),
         "pv_power": _round(latest.get("pv_power")),
         "load_power": _round(latest.get("load_power")),
@@ -290,10 +307,11 @@ async def battery(days: int = Query(7, ge=1, le=90)):
 
 # ── /api/energy/today ──────────────────────────────────────────────────────
 @router.get("/energy/today")
-async def energy_today():
-    """Daily energy balance from the cumulative Growatt counters."""
-    latest = db.latest_fields(config.BUCKET_ENERGY, "energy")
+async def energy_today(site: str | None = Query(None)):
+    s = _resolve_site(site)
+    latest = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=s["site_id"])
     return {
+        "site_id": s["site_id"],
         "pv_energy_today": _round(latest.get("pv_energy_today"), 2),
         "load_energy_today": _round(latest.get("load_energy_today"), 2),
         "battery_soc": _round(latest.get("battery_soc")),
@@ -302,15 +320,15 @@ async def energy_today():
 
 # ── /api/energy/autonomy ───────────────────────────────────────────────────
 @router.get("/energy/autonomy")
-async def energy_autonomy(capacity_kwh: float = Query(None, ge=0)):
-    """Estimated remaining runtime: SOC * capacity / avg load (last 24h)."""
-    capacity = config.BATTERY_CAPACITY_KWH if capacity_kwh is None else capacity_kwh
-    latest = db.latest_fields(config.BUCKET_ENERGY, "energy")
+async def energy_autonomy(site: str | None = Query(None), capacity_kwh: float = Query(None, ge=0)):
+    s = _resolve_site(site)
+    sid = s["site_id"]
+    capacity = s.get("battery_capacity_kwh", config.BATTERY_CAPACITY_KWH) if capacity_kwh is None else capacity_kwh
+    latest = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=sid)
     soc = latest.get("battery_soc")
 
-    # Average load over the last 24h (W -> kW).
     avg_load_kw = None
-    series = db.series(config.BUCKET_ENERGY, "energy", ["load_power"], days=1, every="1h")
+    series = db.series(config.BUCKET_ENERGY, "energy", ["load_power"], site_id=sid, days=1, every="1h")
     loads = [v for v in series.get("load_power", []) if isinstance(v, (int, float))]
     if loads:
         avg_load_kw = (sum(loads) / len(loads)) / 1000.0
@@ -320,6 +338,7 @@ async def energy_autonomy(capacity_kwh: float = Query(None, ge=0)):
         hours_remaining = (soc / 100.0) * capacity / avg_load_kw
 
     return {
+        "site_id": sid,
         "soc": _round(soc),
         "capacity_kwh": capacity,
         "avg_load_kw": _round(avg_load_kw, 3),
@@ -329,6 +348,6 @@ async def energy_autonomy(capacity_kwh: float = Query(None, ge=0)):
 
 # ── /api/microclimate ──────────────────────────────────────────────────────
 @router.get("/microclimate")
-async def microclimate_stats():
-    """Correction statistics; empty/learning until >= 30 days of paired data."""
-    return microclimate.get_statistics()
+async def microclimate_stats(site: str | None = Query(None)):
+    s = _resolve_site(site)
+    return microclimate.get_statistics(s["site_id"])

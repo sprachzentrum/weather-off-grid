@@ -1,6 +1,10 @@
 # Credentials
 .env
 frontend/config.js
+# Persisted runtime settings (contains site credentials / Growatt password)
+backend/data/
+data/
+settings.json
 
 # Python
 __pycache__/

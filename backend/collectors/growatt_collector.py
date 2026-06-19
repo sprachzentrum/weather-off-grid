@@ -41,7 +41,8 @@ FIELD_CANDIDATES: dict[str, list[str]] = {
     # the inverter's 5000 W nameplate, not the actual consumption.
     "load_power": ["pLocalLoad", "loadPower", "localLoadPower", "loadPowerTotal",
                    "outPutPower", "pacToUser", "rLoadPower"],
-    "load_energy_today": ["elocalLoadToday", "loadEnergyToday", "eToUserToday"],
+    "load_energy_today": ["elocalLoadToday", "loadEnergyToday", "eToUserToday",
+                          "eToUser", "eLoadToday", "useEnergyToday", "eopDischrToday"],
     "inverter_temperature": ["tempInverter", "temperature", "invTemp",
                              "ipmTemperature", "temp", "temp1", "temp2"],
 }
@@ -50,7 +51,8 @@ STATUS_CANDIDATES = ["statusText", "status", "storageStatus", "deviceStatus"]
 # Fields where a 0 reading usually means "wrong field"; prefer the first
 # non-zero candidate (these candidate lists hold only same-quantity fields, so
 # this cannot accidentally pick a rated/nominal value).
-PREFER_NONZERO = {"battery_voltage", "pv_power", "inverter_temperature"}
+PREFER_NONZERO = {"battery_voltage", "pv_power", "inverter_temperature",
+                  "load_energy_today", "pv_energy_today"}
 
 
 def _to_float(value: Any) -> float | None:

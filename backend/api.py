@@ -11,7 +11,13 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from statistics import median
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -72,6 +78,58 @@ def _today_iso(raw: dict) -> str:
 
 def _round(value, ndigits: int = 1):
     return round(value, ndigits) if isinstance(value, (int, float)) else value
+
+
+def _parse_iso(t: str):
+    try:
+        return datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _integrate_kwh(points: list[tuple]) -> float | None:
+    """Trapezoidal integral of power (W) over time -> energy (kWh).
+
+    points: [(datetime, watts), ...]. Gaps longer than 2 h are skipped so a
+    sensor outage doesn't invent energy.
+    """
+    pts = sorted((t, v) for t, v in points if t is not None and isinstance(v, (int, float)))
+    if len(pts) < 2:
+        return None
+    wh = 0.0
+    for (t0, p0), (t1, p1) in zip(pts, pts[1:]):
+        dt_h = (t1 - t0).total_seconds() / 3600.0
+        if 0 < dt_h <= 2:
+            wh += (p0 + p1) / 2.0 * dt_h
+    return round(wh / 1000.0, 2)
+
+
+def _site_midnight_utc(site: dict) -> datetime:
+    """Start of the current local day for a site, as a UTC datetime."""
+    tz = timezone.utc
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(site.get("timezone") or "UTC")
+        except Exception:  # noqa: BLE001
+            tz = timezone.utc
+    now_local = datetime.now(tz)
+    midnight = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight.astimezone(timezone.utc)
+
+
+def _energy_since_midnight(site: dict, field: str) -> float | None:
+    """Integrate a power field (W) since local midnight into kWh from InfluxDB."""
+    series = db.series(
+        config.BUCKET_ENERGY, "energy", [field],
+        site_id=site["site_id"], days=2, every="15m",
+    )
+    midnight = _site_midnight_utc(site)
+    points = []
+    for t, v in zip(series.get("time", []), series.get(field, [])):
+        dt = _parse_iso(t)
+        if dt is not None and v is not None and dt >= midnight:
+            points.append((dt, v))
+    return _integrate_kwh(points)
 
 
 # ── /api/sites ─────────────────────────────────────────────────────────────
@@ -311,11 +369,27 @@ async def battery(site: str | None = Query(None), days: int = Query(7, ge=1, le=
 async def energy_today(site: str | None = Query(None)):
     s = _resolve_site(site)
     latest = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=s["site_id"])
+
+    # The inverter's *_Today counters are unreliable on SPF (often stuck at 0),
+    # so fall back to integrating the stored power readings since local midnight.
+    load_e = latest.get("load_energy_today")
+    load_src = "inverter"
+    if not load_e:
+        load_e = _energy_since_midnight(s, "load_power")
+        load_src = "integrated"
+
+    pv_e = latest.get("pv_energy_today")
+    pv_src = "inverter"
+    if not pv_e:
+        pv_e = _energy_since_midnight(s, "pv_power")
+        pv_src = "integrated"
+
     return {
         "site_id": s["site_id"],
-        "pv_energy_today": _round(latest.get("pv_energy_today"), 2),
-        "load_energy_today": _round(latest.get("load_energy_today"), 2),
+        "pv_energy_today": _round(pv_e, 2),
+        "load_energy_today": _round(load_e, 2),
         "battery_soc": _round(latest.get("battery_soc")),
+        "source": {"pv": pv_src, "load": load_src},
     }
 
 
@@ -327,12 +401,23 @@ async def energy_autonomy(site: str | None = Query(None), capacity_kwh: float = 
     capacity = s.get("battery_capacity_kwh", config.BATTERY_CAPACITY_KWH) if capacity_kwh is None else capacity_kwh
     latest = db.latest_fields(config.BUCKET_ENERGY, "energy", site_id=sid)
     soc = latest.get("battery_soc")
+    current_load_w = latest.get("load_power")
 
-    avg_load_kw = None
-    series = db.series(config.BUCKET_ENERGY, "energy", ["load_power"], site_id=sid, days=1, every="1h")
-    loads = [v for v in series.get("load_power", []) if isinstance(v, (int, float))]
-    if loads:
-        avg_load_kw = (sum(loads) / len(loads)) / 1000.0
+    # Representative draw = MEDIAN of the last ~3 h of load_power. The median is
+    # robust to stale outliers (e.g. old 5000 W rated-power readings before the
+    # load_power fix). Fall back to the current load when history is too short.
+    series = db.series(config.BUCKET_ENERGY, "energy", ["load_power"], site_id=sid, days=1, every="30m")
+    loads = [v for v in series.get("load_power", []) if isinstance(v, (int, float)) and v >= 0]
+    recent = loads[-6:]  # last ~3 h
+    avg_load_w = None
+    source = None
+    if len(recent) >= 3:
+        avg_load_w = median(recent)
+        source = "median_3h"
+    if (avg_load_w is None or avg_load_w == 0) and isinstance(current_load_w, (int, float)):
+        avg_load_w = current_load_w
+        source = "current"
+    avg_load_kw = (avg_load_w / 1000.0) if avg_load_w else None
 
     hours_remaining = None
     if soc is not None and avg_load_kw and avg_load_kw > 0:
@@ -343,6 +428,7 @@ async def energy_autonomy(site: str | None = Query(None), capacity_kwh: float = 
         "soc": _round(soc),
         "capacity_kwh": capacity,
         "avg_load_kw": _round(avg_load_kw, 3),
+        "load_source": source,
         "hours_remaining": _round(hours_remaining, 1),
     }
 

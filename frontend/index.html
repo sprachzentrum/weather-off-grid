@@ -264,7 +264,7 @@ const I18N = {
     charts:"Verlauf & Prognose",ch_temp:"Temperatur (°C)",ch_wind:"Wind & Böen (km/h)",ch_rain:"Niederschlag (mm)",
     ch_press:"Luftdruck (hPa)",ch_soc:"Batterie SOC (%)",ch_pv:"PV-Leistung (W)",offgrid:"Off-Grid",
     microclimate:"Mikroklima-Lernfortschritt",data_src:"Daten",charge:"Laden",discharge:"Entladen",idle:"Ruhe",
-    pv:"PV",load:"Last",soc:"Ladestand",today_pv:"PV heute",today_load:"Verbrauch heute",
+    pv:"PV",load:"Last",voltage:"Spannung",soc:"Ladestand",today_pv:"PV heute",today_load:"Verbrauch heute",
     feels:"gefühlt",humidity:"Luftfeuchte",dewpoint:"Taupunkt",wind:"Wind",gust:"Böen",pressure:"Luftdruck",
     solar:"Solar",uv:"UV-Index",rain:"Regen",rain_today:"Heute",rate:"Rate",
     solar_yield:"Solarertrag (PSH)",wind_potential:"Wind-Potenzial",rain_hydro:"Regen / Hydro",energy_balance:"Energiebilanz",
@@ -282,7 +282,7 @@ const I18N = {
     charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
     ch_press:"Pressure (hPa)",ch_soc:"Battery SOC (%)",ch_pv:"PV power (W)",offgrid:"Off-grid",
     microclimate:"Microclimate learning",data_src:"Data",charge:"Charging",discharge:"Discharging",idle:"Idle",
-    pv:"PV",load:"Load",soc:"State of charge",today_pv:"PV today",today_load:"Load today",
+    pv:"PV",load:"Load",voltage:"Voltage",soc:"State of charge",today_pv:"PV today",today_load:"Load today",
     feels:"feels like",humidity:"Humidity",dewpoint:"Dew point",wind:"Wind",gust:"Gusts",pressure:"Pressure",
     solar:"Solar",uv:"UV index",rain:"Rain",rain_today:"Today",rate:"Rate",
     solar_yield:"Solar yield (PSH)",wind_potential:"Wind potential",rain_hydro:"Rain / Hydro",energy_balance:"Energy balance",
@@ -300,7 +300,7 @@ const I18N = {
     charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
     ch_press:"Presión (hPa)",ch_soc:"SOC batería (%)",ch_pv:"Potencia FV (W)",offgrid:"Off-grid",
     microclimate:"Aprendizaje microclima",data_src:"Datos",charge:"Cargando",discharge:"Descargando",idle:"Reposo",
-    pv:"FV",load:"Carga",soc:"Estado de carga",today_pv:"FV hoy",today_load:"Consumo hoy",
+    pv:"FV",load:"Carga",voltage:"Tensión",soc:"Estado de carga",today_pv:"FV hoy",today_load:"Consumo hoy",
     feels:"sensación",humidity:"Humedad",dewpoint:"Punto rocío",wind:"Viento",gust:"Ráfagas",pressure:"Presión",
     solar:"Solar",uv:"Índice UV",rain:"Lluvia",rain_today:"Hoy",rate:"Tasa",
     solar_yield:"Rendimiento solar (PSH)",wind_potential:"Potencial eólico",rain_hydro:"Lluvia / Hidro",energy_balance:"Balance energético",
@@ -477,7 +477,7 @@ const hhmm = iso => { const d=new Date(iso); return String(d.getHours()).padStar
 /* ============================================================
    Renderers
    ============================================================ */
-function renderBattery(cur){
+function renderBattery(cur, energyToday, autonomy){
   const b = cur.battery;
   if(!b){ $("battery").innerHTML = `<div class="skeleton">${t("no_battery")}</div>`; return; }
   const soc = b.battery_soc ?? 0;
@@ -486,6 +486,9 @@ function renderBattery(cur){
   let flow = `<span class="flow idle">${t("idle")}</span>`;
   if(power>10) flow = `<span class="flow charge">▲ ${t("charge")} ${fmt(Math.abs(power)/1000,2)} kW</span>`;
   else if(power<-10) flow = `<span class="flow discharge">▼ ${t("discharge")} ${fmt(Math.abs(power)/1000,2)} kW</span>`;
+  const e = energyToday || {}, a = autonomy || {};
+  const stat = (k,v,unit,extra="") => `<div class="stat"><div class="k">${k}</div>
+    <div class="v">${v}<small> ${unit}</small></div>${extra}</div>`;
   $("battery").innerHTML = `
     <div class="bat-visual">
       <div class="bat-cap"></div>
@@ -496,8 +499,12 @@ function renderBattery(cur){
     </div>
     <div class="bat-stats">
       <div class="stat"><div class="k">${t("soc")}</div><div class="v" style="color:${color}">${fmt0(soc)}<small> %</small></div><div>${flow}</div></div>
-      <div class="stat"><div class="k">☀️ ${t("pv")}</div><div class="v">${fmt0(b.pv_power)}<small> W</small></div></div>
-      <div class="stat"><div class="k">🏠 ${t("load")}</div><div class="v">${fmt0(b.load_power)}<small> W</small></div></div>
+      ${stat("☀️ "+t("pv"), fmt0(b.pv_power), "W")}
+      ${stat("🏠 "+t("load"), fmt0(b.load_power), "W")}
+      ${stat("🔌 "+t("voltage"), fmt(b.battery_voltage,1), "V")}
+      ${stat("☀️ "+t("today_pv"), fmt(e.pv_energy_today,1), "kWh")}
+      ${stat("🏠 "+t("today_load"), fmt(e.load_energy_today,1), "kWh")}
+      ${stat("⏳ "+t("autonomy"), a.hours_remaining!=null?"≈ "+fmt(a.hours_remaining,1):"–", t("hours"))}
     </div>`;
 }
 
@@ -721,7 +728,7 @@ async function refresh(){
     const c=results.current;
     if(c.sun){ $("sunrise").textContent=c.sun.sunrise?hhmm(c.sun.sunrise):"–"; $("sunset").textContent=c.sun.sunset?hhmm(c.sun.sunset):"–"; }
     $("updated").textContent = c.updated ? hhmm(c.updated) : new Date().toLocaleTimeString(LANG,{hour:"2-digit",minute:"2-digit"});
-    if(CFG.SHOW_BATTERY!==false) renderBattery(c);
+    if(CFG.SHOW_BATTERY!==false) renderBattery(c, results.energyToday, results.autonomy);
     renderCurrent(c, results.localforecast);
   }
   if(results.localforecast) renderLocalForecast(results.localforecast);

@@ -30,10 +30,12 @@ FIELD_CANDIDATES: dict[str, list[str]] = {
     "battery_soc": ["capacity", "SOC", "soc", "batterySoc", "capacity1"],
     "battery_voltage": ["vBat", "vbat", "batteryVoltage", "batVolt", "batVoltage",
                         "vBatteryVoltage", "vBatt"],
-    # PV power: ppv often reads 0 on SPF while PV is producing; try the per-string
-    # and alternate names first, and extract_fields computes vpv*ipv as a fallback.
-    "pv_power": ["ppv1", "ppv2", "pPv", "pvPower", "ppvTotal", "ppvtotal",
-                 "solarPower", "ppv"],
+    # PV power: "ppv" is the TOTAL and comes first (e.g. storageDetailBean.ppv=727);
+    # per-string ppv1/ppv2 are fallbacks (ppv2 is often 0 on a single-MPPT SPF).
+    # prefer_nonzero + the multi-occurrence search skip a stray top-level ppv=0,
+    # and extract_fields computes vpv*ipv as a last resort.
+    "pv_power": ["ppv", "ppv1", "pPv", "pvPower", "ppvTotal", "ppvtotal",
+                 "solarPower", "ppv2"],
     "pv_energy_today": ["epvToday", "epvtoday", "ppvToday", "eToday", "epv1Today",
                         "epvTotal", "epv1Tot"],
     # Real local load for SPF off-grid models. Deliberately EXCLUDES "activePower"
@@ -64,23 +66,38 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _find_key_value(data: Any, key: str, path: str = "") -> tuple[float | None, str | None]:
-    """First numeric value of a single `key` anywhere in the tree, with its path."""
-    if isinstance(data, dict):
-        if key in data:
-            num = _to_float(data[key])
-            if num is not None:
-                return num, path + key
-        for k, value in data.items():
-            num, mk = _find_key_value(value, key, f"{path}{k}.")
-            if num is not None:
-                return num, mk
-    elif isinstance(data, list):
-        for i, item in enumerate(data):
-            num, mk = _find_key_value(item, key, f"{path}{i}.")
-            if num is not None:
-                return num, mk
-    return None, None
+def _find_key_value(data: Any, key: str, prefer_nonzero: bool = False) -> tuple[float | None, str | None]:
+    """
+    Find a single `key` anywhere in the tree, with its dotted path.
+
+    With prefer_nonzero, a non-zero occurrence beats a zero one - some SPF
+    responses repeat a key (e.g. a top-level ppv=0 plus the real
+    storageDetailBean.ppv=727), and we want the meaningful value.
+    """
+    found_zero: list = [None, None]  # (value, path)
+
+    def walk(d: Any, p: str):
+        if isinstance(d, dict):
+            if key in d:
+                num = _to_float(d[key])
+                if num is not None:
+                    if num != 0 or not prefer_nonzero:
+                        return num, p + key
+                    if found_zero[0] is None:
+                        found_zero[0], found_zero[1] = num, p + key
+            for k, v in d.items():
+                r = walk(v, f"{p}{k}.")
+                if r:
+                    return r
+        elif isinstance(d, list):
+            for i, it in enumerate(d):
+                r = walk(it, f"{p}{i}.")
+                if r:
+                    return r
+        return None
+
+    r = walk(data, "")
+    return r if r else (found_zero[0], found_zero[1])
 
 
 def _resolve(data: Any, keys: list[str], prefer_nonzero: bool = False) -> tuple[float | None, str | None]:
@@ -91,7 +108,7 @@ def _resolve(data: Any, keys: list[str], prefer_nonzero: bool = False) -> tuple[
     """
     zero: tuple[float | None, str | None] = (None, None)
     for key in keys:
-        val, mk = _find_key_value(data, key)
+        val, mk = _find_key_value(data, key, prefer_nonzero=prefer_nonzero)
         if val is None:
             continue
         if not prefer_nonzero or val != 0:

@@ -19,6 +19,8 @@ Dieses Dashboard sammelt deine lokalen Messdaten, archiviert parallel die region
 - 7-Tage-Vorhersage via Open-Meteo (kostenlos, kein API-Key)
 - Historische Diagramme (Temperatur, Wind, Niederschlag, Luftdruck)
 - Mikroklima-Korrektur: lernt aus dem Vergleich Vorhersage vs. Realitaet
+- Lokale Kurzzeit-Prognose (Zambretti) aus Druck + Wind der eigenen Station -
+  6-12 h, funktioniert offline, Suedhalbkugel-korrekt, mit Drucktrend-Graph
 
 **Energie**
 - Growatt-Inverter: Battery SOC, PV-Leistung, Last, Tagesertrag

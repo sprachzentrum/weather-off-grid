@@ -82,6 +82,22 @@
   .compass .needle::after{content:"";position:absolute;top:-4px;left:50%;transform:translateX(-50%);
     border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:7px solid var(--accent)}
 
+  /* local barometric forecast */
+  .lf-wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .lf-main{display:flex;gap:14px;align-items:center;flex:1;min-width:240px}
+  .lf-icon{font-size:2.6rem;line-height:1}
+  .lf-text{font-size:1.15rem;font-weight:700}
+  .lf-sub{color:var(--dim);font-size:.85rem;margin-top:3px}
+  .lf-sub b{color:var(--txt)}
+  .lf-chart{flex:1;min-width:260px;height:120px;position:relative}
+  .lf-compare{margin-top:10px;font-size:.8rem;padding:7px 11px;border-radius:8px;background:var(--card-2);
+    display:flex;gap:10px;flex-wrap:wrap}
+  .lf-compare .tag{font-weight:600}
+  #localforecast.sev-good{border-left:4px solid var(--good)}
+  #localforecast.sev-changeable{border-left:4px solid var(--warn)}
+  #localforecast.sev-deteriorating{border-left:4px solid var(--bad)}
+  .arrow-up{color:var(--good)} .arrow-down{color:var(--bad)} .arrow-flat{color:var(--dim)}
+
   /* horizontal scrollers */
   .scroll{display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;scroll-snap-type:x proximity}
   .scroll::-webkit-scrollbar{height:6px}.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
@@ -189,6 +205,12 @@
     <div class="grid cur-grid" id="current"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
+  <!-- Local barometric forecast (Zambretti, from local sensors) -->
+  <section id="sec-localforecast">
+    <h2 data-i18n="local_forecast">Lokale Prognose <span class="pill" data-i18n="zambretti_pill">6–12 h · Zambretti</span></h2>
+    <div class="card" id="localforecast"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
   <!-- 4. 7-day forecast -->
   <section>
     <h2 data-i18n="forecast_7d">7-Tage-Vorhersage <span class="pill" id="mc-pill"></span></h2>
@@ -251,7 +273,10 @@ const I18N = {
     hit_rate:"Treffer Regen",temp_dev:"Ø Temp-Abweichung",wind_corr:"Wind-Korrektur",days_data:"Tage Daten",
     learning:"Lernphase",mc_learning:"Sammelt Daten … {n}/{m} Tage bis zur Aktivierung",
     setup_title:"Einrichtung nötig",first_run:"Noch nicht eingerichtet",open_setup:"Jetzt einrichten",no_conn:"Keine Verbindung zum Backend – zeige zuletzt gespeicherte Daten.",
-    offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)"},
+    offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)",
+    local_forecast:"Lokale Prognose",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
+    lf_local:"Lokal",lf_regional:"Open-Meteo",lf_rain:"Regen",lf_norain:"kein Regen",
+    lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar"},
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
     charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
@@ -266,7 +291,10 @@ const I18N = {
     hit_rate:"Rain hit rate",temp_dev:"Avg temp deviation",wind_corr:"Wind correction",days_data:"Days of data",
     learning:"Learning",mc_learning:"Collecting data … {n}/{m} days until activation",
     setup_title:"Setup required",first_run:"Not configured yet",open_setup:"Set up now",no_conn:"No backend connection – showing last saved data.",
-    offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)"},
+    offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)",
+    local_forecast:"Local outlook",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
+    lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"rain",lf_norain:"no rain",
+    lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available"},
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
     charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
@@ -281,7 +309,31 @@ const I18N = {
     hit_rate:"Acierto lluvia",temp_dev:"Desv. temp media",wind_corr:"Corrección viento",days_data:"Días de datos",
     learning:"Aprendiendo",mc_learning:"Recopilando datos … {n}/{m} días hasta activar",
     setup_title:"Configuración necesaria",first_run:"Aún sin configurar",open_setup:"Configurar ahora",no_conn:"Sin conexión al backend – mostrando últimos datos.",
-    offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)"}
+    offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)",
+    local_forecast:"Pronóstico local",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
+    lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"lluvia",lf_norain:"sin lluvia",
+    lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión"}
+};
+/* Zambretti forecast texts, index 0 (best) .. 25 (worst). */
+const ZAMBRETTI = {
+  de:["Beständig schön","Schönes Wetter","Wird zunehmend schön","Schön, aber wechselhafter","Schön, einzelne Schauer möglich",
+    "Recht schön, Besserung","Recht schön, früh evtl. Schauer","Recht schön, später Schauer","Früh Schauer, dann Besserung",
+    "Wechselhaft, Besserung","Recht schön, Schauer wahrscheinlich","Eher unbeständig, später Aufklaren","Unbeständig, wahrscheinlich Besserung",
+    "Schauer, sonnige Abschnitte","Schauer, zunehmend unbeständig","Wechselhaft, etwas Regen","Unbeständig, kurze schöne Phasen",
+    "Unbeständig, später Regen","Unbeständig, etwas Regen","Überwiegend sehr unbeständig","Zeitweise Regen, Verschlechterung",
+    "Zeitweise Regen, sehr unbeständig","Häufig Regen","Regen, sehr unbeständig","Stürmisch, viel Regen","Stürmisch, sehr nass"],
+  en:["Settled fine","Fine weather","Becoming fine","Fine, becoming less settled","Fine, possible showers",
+    "Fairly fine, improving","Fairly fine, possible showers","Fairly fine, showery later","Showery early, improving",
+    "Changeable, improving","Fairly fine, showers likely","Rather unsettled, clearing later","Unsettled, probably improving",
+    "Showery, bright intervals","Showery, becoming unsettled","Changeable, some rain","Unsettled, short fine intervals",
+    "Unsettled, rain later","Unsettled, some rain","Mostly very unsettled","Occasional rain, worsening",
+    "Rain at times, very unsettled","Rain frequently","Rain, very unsettled","Stormy, much rain","Stormy, very wet"],
+  es:["Estable y bueno","Buen tiempo","Mejorando","Bueno, menos estable","Bueno, posibles chubascos",
+    "Bastante bueno, mejorando","Bastante bueno, posibles chubascos","Bastante bueno, chubascos después","Chubascos temprano, mejorando",
+    "Variable, mejorando","Bastante bueno, probables chubascos","Algo inestable, despejando","Inestable, probablemente mejorando",
+    "Chubascos, intervalos soleados","Chubascos, más inestable","Variable, algo de lluvia","Inestable, breves intervalos buenos",
+    "Inestable, lluvia después","Inestable, algo de lluvia","Muy inestable","Lluvia ocasional, empeorando",
+    "Lluvia a ratos, muy inestable","Lluvia frecuente","Lluvia, muy inestable","Tormentoso, mucha lluvia","Tormentoso, muy húmedo"]
 };
 let LANG = "de";
 const t = (k, vars={}) => {
@@ -449,7 +501,7 @@ function renderBattery(cur){
     </div>`;
 }
 
-function renderCurrent(cur){
+function renderCurrent(cur, lf){
   const w = cur.weather || {};
   const {ico,desc} = wmo(cur.weather_code ?? 1, cur.is_day !== 0);
   $("cur-src").textContent = w.source==="station" ? "● LIVE" : "Open-Meteo";
@@ -467,9 +519,55 @@ function renderCurrent(cur){
     <div class="card metric"><div class="lbl">🌬️ ${t("wind")}</div><div class="wind-row"><div>
       <div class="val">${fmt(w.wind_speed)}<small> km/h</small></div>
       <div class="extra">${t("gust")} ${fmt(w.wind_gust)} · ${windDir(wd)} ${wd!=null?fmt0(wd)+"°":""}</div></div>${compass}</div></div>
-    ${cell("📊 "+t("pressure"),fmt0(w.pressure_relative),"hPa")}
+    ${cell("📊 "+t("pressure"),fmt0(w.pressure_relative),"hPa", baroTrendText(lf))}
     ${cell("☀️ "+t("solar"),w.solar_radiation!=null?fmt0(w.solar_radiation):"–","W/m²",w.uv_index!=null?t("uv")+" "+fmt(w.uv_index):"")}
     ${cell("🌧️ "+t("rain"),fmt(w.rain_rate),"mm/h",w.rain_daily!=null?t("rain_today")+" "+fmt(w.rain_daily)+" mm":"")}`;
+}
+
+function baroTrendText(lf){
+  if(!lf || lf.trend_3h==null) return "";
+  const cls = lf.trend==="rising"?"arrow-up":lf.trend==="falling"?"arrow-down":"arrow-flat";
+  const sign = lf.trend_3h>0?"+":"";
+  return `<span class="${cls}">${lf.arrow} ${sign}${fmt(lf.trend_3h)}</span> hPa/3h`;
+}
+
+function renderLocalForecast(lf){
+  const el = $("localforecast");
+  const z = lf && lf.zambretti;
+  if(!z){ el.className="card"; el.innerHTML=`<div class="skeleton">${t("lf_nopressure")}</div>`; return; }
+  el.className = "card sev-"+z.severity;
+  const icon = z.severity==="good"?"☀️":z.severity==="changeable"?"⛅":"🌧️";
+  const text = (ZAMBRETTI[LANG]||ZAMBRETTI.de)[z.index] || z.text;
+  let cmp="";
+  const c = lf.comparison;
+  if(c && c.agree===false){
+    const zr = c.zambretti_rain ? t("lf_rain") : t("lf_norain");
+    cmp = `<div class="lf-compare">
+      <span><span class="tag">${t("lf_local")}:</span> ${zr}</span>
+      <span><span class="tag">${t("lf_regional")}:</span> ${fmt0(c.openmeteo_rain_prob)}% ${t("lf_rain")}</span></div>`;
+  } else if(c && c.agree===true){
+    cmp = `<div class="lf-compare">✓ ${t("lf_agree")}</div>`;
+  }
+  el.innerHTML = `
+    <div class="lf-wrap">
+      <div class="lf-main">
+        <div class="lf-icon">${icon}</div>
+        <div>
+          <div class="lf-text">${text}</div>
+          <div class="lf-sub"><b>${fmt0(lf.pressure)}</b> hPa · ${baroTrendText(lf)}</div>
+          ${cmp}
+        </div>
+      </div>
+      <div class="lf-chart"><canvas id="chBaro"></canvas></div>
+    </div>`;
+  const ps = lf.pressure_series || {};
+  const labels = (ps.time||[]).map(x=>{const d=new Date(x); return String(d.getHours()).padStart(2,"0")+"h";});
+  const opts = JSON.parse(JSON.stringify(C_OPTS));
+  opts.plugins.legend = {display:false};
+  opts.scales.x.maxTicksLimit = 6;
+  chart("chBaro",{type:"line",data:{labels,datasets:[
+    {label:"hPa",data:ps.pressure_relative,borderColor:"#00d4aa",backgroundColor:"rgba(0,212,170,.12)",
+     fill:true,tension:.35,pointRadius:0,spanGaps:true}]},options:opts});
 }
 
 function renderDaily(fc){
@@ -602,6 +700,7 @@ async function refresh(){
   const cap = SITECFG.battery_capacity_kwh || CFG.BATTERY_CAPACITY_KWH || 9.6;
   const calls = {
     current: api(siteParam("/current")),
+    localforecast: api(siteParam("/local-forecast")),
     forecast: api(siteParam("/forecast")),
     hourly: api(siteParam("/forecast/hourly")),
     solar: api(siteParam(`/forecast/solar?pv_kwp=${pv}&pv_eff=${eff}`)),
@@ -623,8 +722,9 @@ async function refresh(){
     if(c.sun){ $("sunrise").textContent=c.sun.sunrise?hhmm(c.sun.sunrise):"–"; $("sunset").textContent=c.sun.sunset?hhmm(c.sun.sunset):"–"; }
     $("updated").textContent = c.updated ? hhmm(c.updated) : new Date().toLocaleTimeString(LANG,{hour:"2-digit",minute:"2-digit"});
     if(CFG.SHOW_BATTERY!==false) renderBattery(c);
-    renderCurrent(c);
+    renderCurrent(c, results.localforecast);
   }
+  if(results.localforecast) renderLocalForecast(results.localforecast);
   if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
   if(results.hourly) renderHourly(results.hourly);
   if(results.history) renderCharts(results.history, results.battery);

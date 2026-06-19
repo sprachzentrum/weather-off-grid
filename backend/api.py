@@ -21,6 +21,7 @@ import db
 import settings_store
 from collectors import openmeteo_collector as om
 from forecast import microclimate
+from forecast import barometric
 
 log = logging.getLogger("api")
 router = APIRouter(prefix="/api")
@@ -351,3 +352,65 @@ async def energy_autonomy(site: str | None = Query(None), capacity_kwh: float = 
 async def microclimate_stats(site: str | None = Query(None)):
     s = _resolve_site(site)
     return microclimate.get_statistics(s["site_id"])
+
+
+# ── /api/local-forecast (Zambretti, from local sensors) ────────────────────
+@router.get("/local-forecast")
+async def local_forecast(site: str | None = Query(None)):
+    """
+    Short-term (6-12 h) barometric forecast from the local station only:
+    pressure trend + Zambretti. Works offline; the Open-Meteo comparison is
+    best-effort and omitted when offline.
+    """
+    s = _resolve_site(site)
+    sid = s["site_id"]
+    latest = db.latest_fields(config.BUCKET_WEATHER, "station", site_id=sid)
+    pressure = latest.get("pressure_relative")
+    wind_dir = latest.get("wind_direction")
+
+    lt = latest.get("_time")
+    month = lt.month if hasattr(lt, "month") else datetime.utcnow().month
+
+    # 30-min pressure series over the last 24 h: drives both the trend and the graph.
+    series = db.series(
+        config.BUCKET_WEATHER, "station", ["pressure_relative"],
+        site_id=sid, days=1, every="30m",
+    )
+    delta = barometric.trend_3h(series.get("time"), series.get("pressure_relative"))
+    trend, arrow = barometric.classify_trend(delta)
+    southern = (s.get("latitude") or 0) < 0
+    zam = barometric.zambretti(pressure, trend, wind_dir, month, southern=southern)
+
+    # Best-effort comparison with the regional model (rain yes/no today).
+    comparison = None
+    if zam is not None:
+        try:
+            raw = await _forecast_raw(s)
+            daily = raw.get("daily") or {}
+            times = daily.get("time") or []
+            if times:
+                idx = times.index(_today_iso(raw)) if _today_iso(raw) in times else 0
+                probs = daily.get("precipitation_probability_max") or []
+                om_prob = probs[idx] if idx < len(probs) else None
+                if om_prob is not None:
+                    comparison = {
+                        "openmeteo_rain_prob": om_prob,
+                        "openmeteo_rain": om_prob >= 50,
+                        "zambretti_rain": zam["rain_likely"],
+                        "agree": zam["rain_likely"] == (om_prob >= 50),
+                    }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[%s] local-forecast OM compare failed: %s", sid, exc)
+
+    return {
+        "site_id": sid,
+        "pressure": _round(pressure),
+        "wind_dir": wind_dir,
+        "trend_3h": delta,
+        "trend": trend,
+        "arrow": arrow,
+        "southern_hemisphere": southern,
+        "zambretti": zam,
+        "pressure_series": series,
+        "comparison": comparison,
+    }

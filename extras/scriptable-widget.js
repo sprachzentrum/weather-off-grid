@@ -1,5 +1,5 @@
 /**
- * Wetter Dashboard - iOS Scriptable Widget
+ * Weather Off-Grid - iOS Scriptable Widget
  *
  * Zeigt aktuelle Wetterdaten und Batterie-Status auf dem iOS Homescreen.
  *
@@ -13,7 +13,7 @@
  */
 
 // ── Konfiguration ────────────────────────────────────
-const BACKEND_URL = 'https://wetter.example.com/api';
+const BACKEND_URL = 'https://weather.example.com/api';
 const STATION_NAME = 'Wetter';
 // ─────────────────────────────────────────────────────
 

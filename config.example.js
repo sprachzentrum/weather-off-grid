@@ -1,5 +1,5 @@
 /**
- * Wetter Dashboard - Frontend-Konfiguration
+ * Weather Off-Grid - Frontend-Konfiguration
  *
  * Kopiere diese Datei nach frontend/config.js:
  *   cp config.example.js frontend/config.js

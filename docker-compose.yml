@@ -3,7 +3,7 @@ version: '3.8'
 services:
   influxdb:
     image: influxdb:2.7
-    container_name: wetter-influxdb
+    container_name: offgrid-influxdb
     ports:
       - "8086:8086"
     volumes:
@@ -19,7 +19,7 @@ services:
 
   backend:
     build: ./backend
-    container_name: wetter-backend
+    container_name: offgrid-backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     env_file:

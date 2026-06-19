@@ -1,4 +1,7 @@
-# Prompt: Wetter El Durazno (Full Stack)
+# Prompt: Weather Off-Grid (Full Stack)
+
+> Generic open-source weather + energy dashboard for off-grid systems.
+> Supports Ecowitt weather stations and Growatt inverters (extensible to other hardware).
 
 ## Vision
 
@@ -32,7 +35,7 @@ Anwendungsfall: Die Station steht in den Sierras de Cordoba auf 1.000 m. Regiona
 ## Dateistruktur
 
 ```
-wetter-el-durazno/
+weather-off-grid/
 ├── backend/
 │   ├── main.py                    # FastAPI Server + API Endpoints
 │   ├── collectors/
@@ -179,7 +182,7 @@ Einzelne HTML-Datei. Laedt `config.js` (Nutzerkonfiguration) und kommuniziert mi
 **Config-Handling:**
 - `<script src="config.js"></script>` erwartet globales `CONFIG`
 - Wenn CONFIG fehlt: Setup-Hinweis anzeigen, nicht crashen
-- CONFIG.BACKEND_URL: URL des FastAPI Backends (z. B. `https://wetter.example.com/api`)
+- CONFIG.BACKEND_URL: URL des FastAPI Backends (z. B. `https://weather.example.com/api`)
 
 **Design:**
 - Dark Theme (Hintergrund #0f0f1a, Karten #1a1a2e, Akzent #00d4aa Cyan/Teal)
@@ -271,8 +274,8 @@ Einzelne HTML-Datei. Laedt `config.js` (Nutzerkonfiguration) und kommuniziert mi
 **manifest.json:**
 ```json
 {
-  "name": "Wetter Dashboard",
-  "short_name": "Wetter",
+  "name": "Weather Off-Grid",
+  "short_name": "Weather",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f0f1a",
@@ -356,7 +359,7 @@ Einfaches statistisches Modell (kein ML-Framework noetig):
 # InfluxDB
 INFLUXDB_URL=http://influxdb:8086
 INFLUXDB_TOKEN=mein-token
-INFLUXDB_ORG=wetter
+INFLUXDB_ORG=offgrid
 INFLUXDB_BUCKET_WEATHER=weather
 INFLUXDB_BUCKET_ENERGY=energy
 INFLUXDB_BUCKET_FORECASTS=forecasts
@@ -387,7 +390,7 @@ BACKEND_PORT=8000
 ```javascript
 const CONFIG = {
     STATION_NAME: 'Meine Wetterstation',
-    BACKEND_URL: 'https://wetter.example.com/api',
+    BACKEND_URL: 'https://weather.example.com/api',
     UNITS: 'metric',
     LANGUAGE: 'de',
     REFRESH_INTERVAL: 300,

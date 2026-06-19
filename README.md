@@ -1,8 +1,8 @@
-# Wetter Dashboard
+# Weather Off-Grid
 
-Open-Source-Wetter- und Energie-Dashboard mit **Mikroklima-Vorhersage** fuer Ecowitt-Stationen und Growatt-Inverter.
+Open-Source-Wetter- und Energie-Dashboard mit **Mikroklima-Vorhersage** fuer Off-Grid-Systeme.
 
-Sammelt lokale Wetterdaten, vergleicht sie mit regionalen Vorhersagen und lernt daraus Korrekturfaktoren fuer dein Mikroklima. Dazu eine Batterie-Anzeige und Off-Grid-Energiebilanz. Als PWA installierbar auf dem Handy.
+Unterstuetzt Ecowitt-Wetterstationen, Growatt-Inverter und ist erweiterbar fuer andere Hardware. Sammelt lokale Wetterdaten, vergleicht sie mit regionalen Vorhersagen und lernt daraus Korrekturfaktoren fuer dein Mikroklima. Dazu Batterie-Anzeige und Off-Grid-Energiebilanz. Als PWA installierbar auf dem Handy.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
@@ -58,8 +58,8 @@ Alles laeuft per Docker Compose auf einem Server.
 ### 1. Repo klonen und konfigurieren
 
 ```bash
-git clone https://github.com/DEIN-USER/wetter-el-durazno.git
-cd wetter-el-durazno
+git clone https://github.com/DEIN-USER/weather-off-grid.git
+cd weather-off-grid
 cp config.example.env .env
 cp config.example.js frontend/config.js
 ```
@@ -81,7 +81,7 @@ LONGITUDE=-64.7916
 ```javascript
 const CONFIG = {
     STATION_NAME: 'Meine Wetterstation',
-    BACKEND_URL: 'https://wetter.example.com/api',
+    BACKEND_URL: 'https://weather.example.com/api',
     // ...
 };
 ```
@@ -140,14 +140,28 @@ docker compose exec backend python import_historical.py --openmeteo --years 3
 | `SHOW_MICROCLIMATE` | Boolean | Mikroklima-Korrekturen anzeigen |
 | `BATTERY_CAPACITY_KWH` | Number | Batteriekapazitaet (fuer Prozent-Berechnung) |
 
-## Getestete Hardware
+## Unterstuetzte Hardware
 
-| Geraet | Typ | Status |
+### Wetterstationen (Ecowitt-Protokoll)
+
+| Modell | Frequenz | Status |
+|--------|----------|--------|
+| Ecowitt WH2900 | 433 MHz | Getestet |
+| Ecowitt GW1000/1100 | 433/868 MHz | Kompatibel (ungetestet) |
+| Ecowitt GW2000 | 433/868 MHz | Kompatibel (ungetestet) |
+| Ecowitt HP2551/HP3501 | 433 MHz | Kompatibel (ungetestet) |
+| Froggit-Stationen | 433 MHz | Kompatibel (Ecowitt OEM) |
+
+### Inverter
+
+| Modell | API | Status |
 |--------|-----|--------|
-| Ecowitt WH2900 | Wetterstation | Getestet |
-| Growatt SPF 5000 ES | Off-Grid-Inverter | Getestet |
+| Growatt SPF 5000 ES | ShinePhone (Legacy) | Getestet |
+| Growatt SPF 3000-6000 Serie | ShinePhone (Legacy) | Kompatibel (ungetestet) |
+| Growatt MIN/MIC/MOD Serie | OpenAPI V1 | Geplant |
+| Growatt MIX/SPH Serie | ShinePhone (Legacy) | Kompatibel (ungetestet) |
 
-Pull Requests mit weiteren Geraeten sind willkommen!
+> **Andere Hardware?** Die Architektur ist modular: neue Collectors koennen als Python-Module in `backend/collectors/` hinzugefuegt werden. Pull Requests willkommen!
 
 ## Mikroklima-Modell
 

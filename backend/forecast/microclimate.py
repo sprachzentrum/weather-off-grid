@@ -32,6 +32,9 @@ MIN_DAYS = 30            # do not correct anything below this
 FULL_CONFIDENCE_DAYS = 90
 LOOKBACK_DAYS = 400      # ~13 months so every calendar month can contribute
 RAIN_THRESHOLD_MM = 1.0  # measured rain above this counts as "it rained"
+MAX_TEMP_DIFF = 20.0     # °C; a larger forecast-vs-measured gap means a
+                         # mispaired / unit-corrupt day -> drop it from the bias
+FAHRENHEIT_SUSPECT = 45.0  # median daily max above this => data looks like °F
 _CACHE_TTL = 3600        # rebuild model at most hourly
 
 _cache: dict[str, tuple[float, dict]] = {}
@@ -147,30 +150,58 @@ def _build(site_id: str | None) -> dict:
     confidence = min(1.0, n / FULL_CONFIDENCE_DAYS)
 
     # 1) Temperature bias per month -------------------------------------------
+    # Use the MEDIAN of (measured - forecast) and drop implausible gaps. A few
+    # mispaired or unit-corrupt days would otherwise drag the mean to absurd
+    # values like -11°C; the median is robust to those outliers.
     month_tmax: dict[int, list[float]] = defaultdict(list)
     month_tmin: dict[int, list[float]] = defaultdict(list)
     all_tmax_diff: list[float] = []
+    all_tmin_diff: list[float] = []
+    m_tmax_samples: list[float] = []
+    f_tmax_samples: list[float] = []
+    sample_pairs: list[dict] = []
+    dropped_outliers = 0
     for day, f, m in pairs:
         month = int(day[5:7])
-        if _num(f.get("tmax")) is not None and _num(m.get("tmax")) is not None:
-            d = m["tmax"] - f["tmax"]
-            month_tmax[month].append(d)
-            all_tmax_diff.append(d)
-        if _num(f.get("tmin")) is not None and _num(m.get("tmin")) is not None:
-            month_tmin[month].append(m["tmin"] - f["tmin"])
+        mtx, ftx = _num(m.get("tmax")), _num(f.get("tmax"))
+        mtn, ftn = _num(m.get("tmin")), _num(f.get("tmin"))
+        if mtx is not None and ftx is not None:
+            m_tmax_samples.append(mtx)
+            f_tmax_samples.append(ftx)
+            d = mtx - ftx
+            if abs(d) <= MAX_TEMP_DIFF:
+                month_tmax[month].append(d)
+                all_tmax_diff.append(d)
+            else:
+                dropped_outliers += 1
+            if len(sample_pairs) < 8:
+                sample_pairs.append({
+                    "date": day, "forecast_tmax": round(ftx, 1),
+                    "measured_tmax": round(mtx, 1), "diff": round(d, 1),
+                })
+        if mtn is not None and ftn is not None:
+            d = mtn - ftn
+            if abs(d) <= MAX_TEMP_DIFF:
+                month_tmin[month].append(d)
+                all_tmin_diff.append(d)
 
     temp_bias = {
         str(mo): {
-            "tmax": round(_avg(month_tmax.get(mo, [])), 2),
-            "tmin": round(_avg(month_tmin.get(mo, [])), 2),
+            "tmax": round(_median(month_tmax.get(mo, [])), 2),
+            "tmin": round(_median(month_tmin.get(mo, [])), 2),
         }
         for mo in range(1, 13)
         if month_tmax.get(mo) or month_tmin.get(mo)
     }
     temp_bias_overall = {
-        "tmax": round(_avg(all_tmax_diff), 2),
-        "tmin": round(_avg([x for lst in month_tmin.values() for x in lst]), 2),
+        "tmax": round(_median(all_tmax_diff), 2),
+        "tmin": round(_median(all_tmin_diff), 2),
     }
+
+    # Unit sanity: a median daily max above ~45°C is almost certainly °F that was
+    # imported as if it were °C. Surfaced in the debug block so it is visible.
+    median_measured_tmax = _median(m_tmax_samples)
+    unit_warning = bool(m_tmax_samples) and median_measured_tmax > FAHRENHEIT_SUSPECT
 
     # 2) Conditional rain probability -----------------------------------------
     fc_rain = fc_rain_hit = no_fc = no_fc_rain = 0
@@ -202,20 +233,24 @@ def _build(site_id: str | None) -> dict:
     }
 
     # 3) Wind scaling per direction -------------------------------------------
+    # Median of plausible ratios only. A sheltered valley station legitimately
+    # reads well below an open-terrain forecast, but ratios outside 0.05..5 are
+    # almost certainly bad pairs (sensor dropout, calm-day division), so drop them.
     dir_ratios: dict[str, list[float]] = defaultdict(list)
     all_ratios: list[float] = []
     for day, f, m in pairs:
         fw, mw = _num(f.get("wind_max")), _num(m.get("wind_max"))
         if fw and fw > 1 and mw is not None:
             ratio = mw / fw
-            all_ratios.append(ratio)
-            sec = _sector(f.get("wind_dir"))
-            if sec:
-                dir_ratios[sec].append(ratio)
-    wind_scale = {sec: round(_avg(r), 3) for sec, r in dir_ratios.items() if r}
-    wind_scale["overall"] = round(_avg(all_ratios), 3) if all_ratios else 1.0
+            if 0.05 <= ratio <= 5.0:
+                all_ratios.append(ratio)
+                sec = _sector(f.get("wind_dir"))
+                if sec:
+                    dir_ratios[sec].append(ratio)
+    wind_scale = {sec: round(_median(r), 3) for sec, r in dir_ratios.items() if r}
+    wind_scale["overall"] = round(_median(all_ratios), 3) if all_ratios else 1.0
 
-    # Statistics (rain forecast accuracy + temp MAE) --------------------------
+    # Statistics (rain forecast accuracy + temp MAE on filtered pairs) ---------
     correct = 0
     total = 0
     abs_tmax = []
@@ -226,16 +261,32 @@ def _build(site_id: str | None) -> dict:
             predicted = prob >= 50
             actual = (_num(m.get("rain")) or 0) >= RAIN_THRESHOLD_MM
             correct += int(predicted == actual)
-        if _num(f.get("tmax")) is not None and _num(m.get("tmax")) is not None:
-            abs_tmax.append(abs(m["tmax"] - f["tmax"]))
+    for d in all_tmax_diff:
+        abs_tmax.append(abs(d))
+
+    debug = {
+        "pairs": n,
+        "pairs_used_temp": len(all_tmax_diff),
+        "dropped_temp_outliers": dropped_outliers,
+        "measured_tmax_median": round(median_measured_tmax, 1) if m_tmax_samples else None,
+        "forecast_tmax_median": round(_median(f_tmax_samples), 1) if f_tmax_samples else None,
+        "unit_warning": unit_warning,
+        "sample_pairs": sample_pairs,
+    }
 
     statistics = {
         "active": True,
         "days_of_data": n,
         "confidence": round(confidence, 2),
         "rain_forecast_accuracy": round(correct / total, 3) if total else None,
-        "avg_temp_deviation": round(_avg(abs_tmax), 2) if abs_tmax else None,
+        "avg_temp_deviation": round(_median(abs_tmax), 2) if abs_tmax else None,
         "typical_wind_correction": wind_scale.get("overall", 1.0),
+        # Exposed for debugging the correction values directly from /api/microclimate.
+        "temp_bias": temp_bias,
+        "temp_bias_overall": temp_bias_overall,
+        "wind_scale": wind_scale,
+        "rain": rain,
+        "debug": debug,
     }
 
     return {
@@ -363,3 +414,12 @@ def _num(v):
 
 def _avg(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0

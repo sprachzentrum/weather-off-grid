@@ -30,7 +30,11 @@ FIELD_CANDIDATES: dict[str, list[str]] = {
     "battery_power": ["batPower", "batteryPower", "pBat", "chargePower"],
     "pv_power": ["ppv", "pPv", "ppvTotal", "solarPower", "ppv1"],
     "pv_energy_today": ["epvToday", "epvtoday", "ppvToday", "eToday", "epv1Today"],
-    "load_power": ["loadPower", "activePower", "outPutPower", "pacToUser", "rLoadPower"],
+    # Real local load for SPF off-grid models. Deliberately EXCLUDES "activePower"
+    # and any rated/nominal field ("ratedPower"/"maxPower"/"rateVA") which report
+    # the inverter's 5000 W nameplate, not the actual consumption.
+    "load_power": ["pLocalLoad", "loadPower", "localLoadPower", "loadPowerTotal",
+                   "outPutPower", "pacToUser", "rLoadPower"],
     "load_energy_today": ["elocalLoadToday", "loadEnergyToday", "eToUserToday"],
     "inverter_temperature": ["temperature", "invTemp", "ipmTemperature", "temp"],
 }
@@ -46,24 +50,66 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _dig(data: Any, keys: list[str]) -> float | None:
-    """Recursively search a nested dict/list for the first candidate key with a numeric value."""
+def _dig_with_key(data: Any, keys: list[str], path: str = "") -> tuple[float | None, str | None]:
+    """Like _dig but also returns the dotted path of the matched key (for debugging)."""
     if isinstance(data, dict):
         for key in keys:
             if key in data:
                 num = _to_float(data[key])
                 if num is not None:
-                    return num
-        for value in data.values():
-            found = _dig(value, keys)
-            if found is not None:
-                return found
+                    return num, path + key
+        for k, value in data.items():
+            num, mk = _dig_with_key(value, keys, f"{path}{k}.")
+            if num is not None:
+                return num, mk
     elif isinstance(data, list):
-        for item in data:
-            found = _dig(item, keys)
-            if found is not None:
-                return found
-    return None
+        for i, item in enumerate(data):
+            num, mk = _dig_with_key(item, keys, f"{path}{i}.")
+            if num is not None:
+                return num, mk
+    return None, None
+
+
+def _dig(data: Any, keys: list[str]) -> float | None:
+    """Recursively search a nested dict/list for the first candidate key with a numeric value."""
+    return _dig_with_key(data, keys)[0]
+
+
+def _flatten(data: Any, prefix: str = "") -> dict:
+    """Flatten a nested dict/list into {dotted.path: value} for debug logging."""
+    out: dict = {}
+    if isinstance(data, dict):
+        for k, v in data.items():
+            out.update(_flatten(v, f"{prefix}{k}."))
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            out.update(_flatten(v, f"{prefix}{i}."))
+    else:
+        out[prefix.rstrip(".")] = data
+    return out
+
+
+_debug_logged = False
+
+
+def log_raw_fields(raw: dict) -> None:
+    """
+    Log the full Growatt response once per process: every field, plus which
+    source field each metric resolved to. Use this to identify the correct
+    load_power field on a given SPF model (the rated 5000 W vs. real load).
+    """
+    global _debug_logged
+    if _debug_logged or not isinstance(raw, dict) or not raw:
+        return
+    _debug_logged = True
+    flat = {k: v for k, v in _flatten(raw).items() if v not in (None, "")}
+    log.info("=== Growatt raw response: %d fields (identify load_power here) ===", len(flat))
+    for k in sorted(flat):
+        log.info("    %s = %s", k, flat[k])
+    log.info("=== Resolved metric <- source field ===")
+    for name, cands in FIELD_CANDIDATES.items():
+        val, key = _dig_with_key(raw, cands)
+        log.info("    %s <- %s = %s", name, key, val)
 
 
 def _dig_str(data: Any, keys: list[str]) -> str | None:
@@ -236,6 +282,7 @@ def _test_blocking(creds: dict) -> dict:
         session = GrowattSession(creds)
         session.login()
         raw = session.fetch()
+        log_raw_fields(raw)
         fields = extract_fields(raw)
         if fields:
             return {"ok": True, "detail": f"OK - SOC {fields.get('battery_soc', '?')}%, {len(fields)} Felder"}
@@ -263,6 +310,7 @@ async def run_poller(site: dict) -> None:
     while True:
         try:
             session, raw = await asyncio.to_thread(_poll_blocking, session, creds)
+            log_raw_fields(raw)
             fields = extract_fields(raw)
             if fields:
                 db.write_point(

@@ -485,7 +485,7 @@ function renderDaily(fc){
       <div class="tmax">${fmt0(tmax)}°</div><div class="tmin">${fmt0(tmin)}°</div>
       <div class="det"><span>💧 <b>${fmt(d.precip_sum)}</b> mm</span>
         <span>☔ <b>${fmt0(c.precip_prob ?? d.precip_prob)}</b> %</span>
-        <span>🌬️ <b>${fmt0(c.wind_max ?? d.wind_max)}</b> km/h</span></div>
+        <span>🌬️ <b>${fmt0(c.wind_max ?? d.wind_max)}</b> km/h ${windDir(d.wind_dir)}</span></div>
       ${badges}</div>`;
   }).join("");
 }

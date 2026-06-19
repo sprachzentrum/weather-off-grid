@@ -40,6 +40,7 @@ from influxdb_client import Point
 
 import config
 import db
+import settings_store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("import")
@@ -241,17 +242,17 @@ def rows_from_ecowitt(path: str) -> list[dict]:
 rows_from_ecowitt_csv = rows_from_ecowitt
 
 
-def import_ecowitt(path: str) -> int:
+def import_ecowitt(path: str, site_id: str) -> int:
     rows = rows_from_ecowitt(path)
     points = [
-        Point("station").time(r["ts"]).tag("source", "import")
+        Point("station").time(r["ts"]).tag("source", "import").tag("site_id", site_id)
         for r in rows
     ]
     for p, r in zip(points, rows):
         for k, v in r["fields"].items():
             p.field(k, v)
     _write_batched(config.BUCKET_WEATHER, points)
-    log.info("imported %d weather rows from %s", len(points), path)
+    log.info("imported %d weather rows from %s (site=%s)", len(points), path, site_id)
     return len(points)
 
 
@@ -278,7 +279,7 @@ def fetch_openmeteo_history(start: str, end: str) -> dict:
     return resp.json()
 
 
-def daily_points_from_openmeteo(raw: dict) -> list[Point]:
+def daily_points_from_openmeteo(raw: dict, site_id: str) -> list[Point]:
     daily = raw.get("daily") or {}
     times = daily.get("time") or []
     points = []
@@ -296,9 +297,14 @@ def daily_points_from_openmeteo(raw: dict) -> list[Point]:
             "weathercode": _at(daily, "weathercode", i),
             "sunshine_hours": round(sunshine / 3600.0, 2) if sunshine else None,
         }
-        p = Point("forecast_daily").time(
-            datetime(target.year, target.month, target.day, tzinfo=timezone.utc)
-        ).tag("target_date", day_iso).tag("lead_days", "1").tag("source", "import")
+        p = (
+            Point("forecast_daily")
+            .time(datetime(target.year, target.month, target.day, tzinfo=timezone.utc))
+            .tag("target_date", day_iso)
+            .tag("lead_days", "1")
+            .tag("source", "import")
+            .tag("site_id", site_id)
+        )
         wrote = False
         for k, v in fields.items():
             if v is not None:
@@ -309,11 +315,11 @@ def daily_points_from_openmeteo(raw: dict) -> list[Point]:
     return points
 
 
-def import_openmeteo(start: str, end: str) -> int:
+def import_openmeteo(start: str, end: str, site_id: str) -> int:
     raw = fetch_openmeteo_history(start, end)
-    points = daily_points_from_openmeteo(raw)
+    points = daily_points_from_openmeteo(raw, site_id)
     _write_batched(config.BUCKET_FORECASTS, points)
-    log.info("imported %d archived forecast days (%s..%s)", len(points), start, end)
+    log.info("imported %d archived forecast days (%s..%s, site=%s)", len(points), start, end, site_id)
     return len(points)
 
 
@@ -335,13 +341,21 @@ def main(argv=None) -> int:
     ap.add_argument("--start", help="start date YYYY-MM-DD (with --openmeteo)")
     ap.add_argument("--end", help="end date YYYY-MM-DD (with --openmeteo)")
     ap.add_argument("--years", type=int, help="convenience: last N years up to today (with --openmeteo)")
+    ap.add_argument("--site", help="site_id to tag the data with (default: the configured default site)")
     args = ap.parse_args(argv)
 
     if not args.ecowitt and not args.openmeteo:
         ap.error("specify --ecowitt CSV and/or --openmeteo (--start/--end or --years)")
 
+    # Resolve which site the imported data belongs to. Must match an endpoint's
+    # ?site= so the microclimate model can pair it (default site claims it too).
+    site_id = args.site or settings_store.default_site_id()
+    if args.site and args.site not in settings_store.site_ids():
+        log.warning("site '%s' is not in settings; importing with that tag anyway", args.site)
+    log.info("importing into site '%s'", site_id)
+
     if args.ecowitt:
-        import_ecowitt(args.ecowitt)
+        import_ecowitt(args.ecowitt, site_id)
     if args.openmeteo:
         start, end = args.start, args.end
         if args.years:
@@ -353,7 +367,7 @@ def main(argv=None) -> int:
                 start = (today.replace(month=2, day=28, year=today.year - args.years)).isoformat()
         if not start or not end:
             ap.error("--openmeteo requires --start and --end, or --years N")
-        import_openmeteo(start, end)
+        import_openmeteo(start, end, site_id)
     return 0
 
 

@@ -94,6 +94,7 @@
   .badge{display:inline-block;margin-top:6px;font-size:.66rem;font-weight:600;padding:2px 7px;border-radius:999px;
     background:rgba(72,149,239,.18);color:var(--blue)}
   .badge.temp{background:rgba(244,162,97,.18);color:var(--warn)}
+  .badge.wind{background:rgba(0,212,170,.18);color:var(--accent)}
   .hour-card{flex:0 0 auto;width:74px;text-align:center;padding:12px 6px}
   .hour-card .hh{font-size:.74rem;color:var(--dim)}.hour-card .ico{font-size:1.4rem;margin:3px 0}
   .hour-card .t{font-weight:700}.hour-card .p{font-size:.7rem;color:var(--blue);margin-top:2px}
@@ -484,7 +485,7 @@ function renderDaily(fc){
       <div class="tmax">${fmt0(tmax)}°</div><div class="tmin">${fmt0(tmin)}°</div>
       <div class="det"><span>💧 <b>${fmt(d.precip_sum)}</b> mm</span>
         <span>☔ <b>${fmt0(c.precip_prob ?? d.precip_prob)}</b> %</span>
-        <span>🌬️ <b>${fmt0(d.wind_max)}</b> km/h</span></div>
+        <span>🌬️ <b>${fmt0(c.wind_max ?? d.wind_max)}</b> km/h</span></div>
       ${badges}</div>`;
   }).join("");
 }
@@ -511,7 +512,7 @@ function renderOffgrid(solar, energyToday, autonomy){
   // wind hours per day estimated from hourly (next 24h only available) -> show daily max instead
   const windRows = (window._forecastDays||[]).slice(0,7).map(d=>`<div class="og-row">
     <span class="d">${weekday(d.date)} ${d.date.slice(8,10)}.</span>
-    <span class="v">${fmt0(d.wind_max)} km/h · ${windDir(d.wind_dir)}</span></div>`).join("");
+    <span class="v">${fmt0((d.corrected&&d.corrected.wind_max)??d.wind_max)} km/h · ${windDir(d.wind_dir)}</span></div>`).join("");
 
   let autoHtml="";
   if(autonomy && autonomy.hours_remaining!=null){

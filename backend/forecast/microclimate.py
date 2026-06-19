@@ -24,6 +24,7 @@ from collections import defaultdict
 
 import config
 import db
+import settings_store
 
 log = logging.getLogger("microclimate")
 
@@ -46,16 +47,31 @@ def _sector(deg) -> str | None:
 
 # ── InfluxDB readers ───────────────────────────────────────────────────────
 def _site_line(site_id: str | None) -> str:
-    return f' and r.site_id == "{site_id}"' if site_id else ""
+    """Site restriction as an `and` clause. The default site also claims
+    untagged (historically imported) points so they can be paired."""
+    if not site_id:
+        return ""
+    try:
+        is_default = site_id == settings_store.default_site_id()
+    except Exception:  # noqa: BLE001
+        is_default = False
+    if is_default:
+        return f' and (r.site_id == "{site_id}" or not exists r.site_id)'
+    return f' and r.site_id == "{site_id}"'
 
 
 def _daily_agg(field: str, fn: str, site_id: str | None) -> dict[str, float]:
-    """Per-day aggregate of a measured weather field -> {date: value}."""
+    """Per-day aggregate of a measured weather field -> {date: value}.
+
+    timeSrc:"_start" labels each daily window with its start day; the default
+    "_stop" would label it with the next day's midnight and shift every measured
+    day +1 relative to the forecast target_date, mispairing the data.
+    """
     flux = f'''
     from(bucket: "{config.BUCKET_WEATHER}")
       |> range(start: -{LOOKBACK_DAYS}d)
       |> filter(fn: (r) => r._measurement == "station" and r._field == "{field}"{_site_line(site_id)})
-      |> aggregateWindow(every: 1d, fn: {fn}, createEmpty: false)
+      |> aggregateWindow(every: 1d, fn: {fn}, timeSrc: "_start", createEmpty: false)
     '''
     out: dict[str, float] = {}
     try:
@@ -168,7 +184,9 @@ def _build(site_id: str | None) -> dict:
         if forecast_rain:
             fc_rain += 1
             fc_rain_hit += int(measured_rain)
-            sec = _sector(m.get("wind_dir"))
+            # Key by the FORECAST wind direction: that is what we know at apply
+            # time (the measured direction is unknown when correcting a forecast).
+            sec = _sector(f.get("wind_dir"))
             if sec:
                 dir_hits[sec].append(int(measured_rain))
         else:
@@ -270,6 +288,7 @@ def apply(day: dict, corrections: dict) -> tuple[dict, list]:
     corrected: dict = {}
     badges: list = []
 
+    # Temperature: additive monthly bias (e.g. 18°C - 2°C = 16°C).
     tmax = day.get("temp_max")
     tmin = day.get("temp_min")
     if isinstance(tmax, (int, float)) and bias.get("tmax") is not None:
@@ -280,14 +299,38 @@ def apply(day: dict, corrections: dict) -> tuple[dict, list]:
         sign = "+" if bias["tmax"] > 0 else ""
         badges.append({"type": "temp", "text": f"lokal {sign}{bias['tmax']:.0f}°C"})
 
-    # Rain: replace regional probability with the learned local hit rate.
+    # Dominant wind direction of the forecast day - drives both the rain factor
+    # and the wind scaling (topography channels both differently per direction).
+    sector = _sector(day.get("wind_dir"))
+
+    # Rain: multiply the regional probability by the learned local factor
+    # (direction-specific when available), e.g. 70% x 0.3 = 21%.
     prob = day.get("precip_prob")
     rain = corrections.get("rain") or {}
-    if isinstance(prob, (int, float)) and prob >= 50 and rain.get("p_rain_given_forecast") is not None:
-        local = round(rain["p_rain_given_forecast"] * 100)
+    factor = (rain.get("by_dir") or {}).get(sector) if sector else None
+    if factor is None:
+        factor = rain.get("p_rain_given_forecast")
+    if isinstance(prob, (int, float)) and prob >= 50 and factor is not None:
+        local = max(0, min(100, round(prob * factor)))
         corrected["precip_prob"] = local
         if abs(local - prob) >= 15:
             badges.append({"type": "rain", "text": f"Regen {local}% statt {int(prob)}%"})
+
+    # Wind: multiplicative scaling by dominant direction (e.g. 15 x 1.4 = 21 km/h).
+    wind_scale = corrections.get("wind_scale") or {}
+    scale = wind_scale.get(sector) if sector else None
+    if scale is None:
+        scale = wind_scale.get("overall")
+    if scale is not None:
+        wmax = day.get("wind_max")
+        gmax = day.get("gust_max")
+        if isinstance(wmax, (int, float)):
+            corrected["wind_max"] = round(wmax * scale, 1)
+        if isinstance(gmax, (int, float)):
+            corrected["gust_max"] = round(gmax * scale, 1)
+        if abs(scale - 1.0) >= 0.15:
+            label = f"{round(scale, 2):g}".replace(".", ",")
+            badges.append({"type": "wind", "text": f"Wind ×{label}"})
 
     return corrected, badges
 

@@ -15,6 +15,7 @@ from influxdb_client import InfluxDBClient, Point, BucketRetentionRules
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 import config
+import settings_store
 
 log = logging.getLogger("db")
 
@@ -120,9 +121,21 @@ def query(flux: str) -> list:
 
 
 def _site_filter(site_id: str | None) -> str:
-    """Optional Flux line restricting to one site. Empty when site_id is None."""
+    """
+    Optional Flux line restricting to one site. Empty when site_id is None.
+
+    The DEFAULT site also claims points without a site_id tag, so data imported
+    before site tagging existed (historical Ecowitt/Open-Meteo imports) still
+    shows up under the default site. Non-default sites require an exact tag match.
+    """
     if not site_id:
         return ""
+    try:
+        is_default = site_id == settings_store.default_site_id()
+    except Exception:  # noqa: BLE001
+        is_default = False
+    if is_default:
+        return f'\n      |> filter(fn: (r) => r.site_id == "{site_id}" or not exists r.site_id)'
     return f'\n      |> filter(fn: (r) => r.site_id == "{site_id}")'
 
 

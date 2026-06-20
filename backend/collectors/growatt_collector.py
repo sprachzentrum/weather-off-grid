@@ -36,8 +36,12 @@ FIELD_CANDIDATES: dict[str, list[str]] = {
     # and extract_fields computes vpv*ipv as a last resort.
     "pv_power": ["ppv", "ppv1", "pPv", "pvPower", "ppvTotal", "ppvtotal",
                  "solarPower", "ppv2"],
-    "pv_energy_today": ["epvToday", "epvtoday", "ppvToday", "eToday", "epv1Today",
-                        "epvTotal", "epv1Tot"],
+    # DAILY PV yield only. Must NOT include lifetime totals (epvTotal/epv1Tot/
+    # eTotal): those are a different quantity (~9000 kWh) and, when epvToday is
+    # absent/zero, prefer_nonzero would otherwise fall through and report the
+    # lifetime total as "today". ShinePhone shows e.g. "Heute 0.4 / Gesamt 9058.7".
+    "pv_energy_today": ["epvToday", "epvtoday", "epv1Today", "epv2Today",
+                        "ppvToday", "eToday"],
     # Real local load for SPF off-grid models. Deliberately EXCLUDES "activePower"
     # and any rated/nominal field ("ratedPower"/"maxPower"/"rateVA") which report
     # the inverter's 5000 W nameplate, not the actual consumption.
@@ -209,9 +213,13 @@ def extract_fields(raw: dict) -> dict:
     """Map a raw Growatt response (any shape) to our metric field set."""
     fields: dict[str, Any] = {}
     for name, candidates in FIELD_CANDIDATES.items():
-        value, _ = _resolve(raw, candidates, prefer_nonzero=(name in PREFER_NONZERO))
+        value, src = _resolve(raw, candidates, prefer_nonzero=(name in PREFER_NONZERO))
         if value is not None:
             fields[name] = value
+        # Verify the daily-yield mapping every poll: a value in the thousands
+        # means a lifetime total leaked into the daily field again.
+        if name == "pv_energy_today":
+            log.info("pv_energy_today <- %s = %s kWh", src, value)
 
     # Battery power with the correct sign (+ = charging, - = discharging).
     bp = _battery_power(raw)

@@ -99,6 +99,17 @@
   #localforecast.sev-deteriorating{border-left:4px solid var(--bad)}
   .arrow-up{color:var(--good)} .arrow-down{color:var(--bad)} .arrow-flat{color:var(--dim)}
 
+  /* fire danger */
+  .fire-wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .fire-main{display:flex;gap:16px;align-items:center;flex:1;min-width:240px}
+  .fire-emoji{font-size:2.6rem;line-height:1}
+  .fire-num{font-size:2.8rem;font-weight:800;line-height:1}
+  .fire-cat{font-size:1.1rem;font-weight:700;margin-top:2px}
+  .fire-sub{color:var(--dim);font-size:.83rem;margin-top:4px}
+  .fire-7d{display:flex;gap:7px;flex-wrap:wrap;flex:1;min-width:210px;justify-content:flex-end}
+  .fire-day{text-align:center;font-size:.66rem;color:var(--dim)}
+  .fire-day .pt{display:block;width:22px;height:22px;border-radius:7px;margin:0 auto 3px}
+
   /* horizontal scrollers */
   .scroll{display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;scroll-snap-type:x proximity}
   .scroll::-webkit-scrollbar{height:6px}.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
@@ -191,6 +202,8 @@
   </header>
 
   <div id="banner" class="banner"></div>
+  <!-- Fire-danger warning banner (very high / extreme only) -->
+  <div id="fire-banner" class="banner err"></div>
 
   <!-- 2. Battery -->
   <section id="sec-battery">
@@ -210,6 +223,12 @@
   <section id="sec-localforecast">
     <h2 data-i18n="local_forecast">Lokale Prognose <span class="pill" data-i18n="zambretti_pill">6–12 h · Zambretti</span></h2>
     <div class="card" id="localforecast"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- Fire danger (between Zambretti and the 7-day forecast) -->
+  <section id="sec-firedanger">
+    <h2>🔥 <span data-i18n="fire_danger">Feuerrisiko</span> <span class="pill" data-i18n="fire_ffdi">FFDI</span></h2>
+    <div class="card" id="firedanger"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
   <!-- 4. 7-day forecast -->
@@ -278,7 +297,9 @@ const I18N = {
     offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)",
     local_forecast:"Lokale Prognose",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Lokal",lf_regional:"Open-Meteo",lf_rain:"Regen",lf_norain:"kein Regen",
-    lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar"},
+    lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar",
+    fire_danger:"Feuerrisiko",fire_ffdi:"FFDI",fire_days_norain:"Tage ohne Regen",
+    fire_warning:"Feuerrisiko {label} — höchste Vorsicht",fire_nodata:"Keine Sensordaten für den Feuerindex"},
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
     charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
@@ -297,7 +318,9 @@ const I18N = {
     offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)",
     local_forecast:"Local outlook",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"rain",lf_norain:"no rain",
-    lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available"},
+    lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available",
+    fire_danger:"Fire danger",fire_ffdi:"FFDI",fire_days_norain:"days without rain",
+    fire_warning:"Fire danger {label} — extreme caution",fire_nodata:"No sensor data for the fire index"},
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
     charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
@@ -316,7 +339,9 @@ const I18N = {
     offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)",
     local_forecast:"Pronóstico local",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"lluvia",lf_norain:"sin lluvia",
-    lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión"}
+    lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión",
+    fire_danger:"Riesgo de incendio",fire_ffdi:"FFDI",fire_days_norain:"días sin lluvia",
+    fire_warning:"Riesgo de incendio {label} — máxima precaución",fire_nodata:"Sin datos del sensor para el índice"}
 };
 /* Zambretti forecast texts, index 0 (best) .. 25 (worst). */
 const ZAMBRETTI = {
@@ -338,6 +363,14 @@ const ZAMBRETTI = {
     "Chubascos, intervalos soleados","Chubascos, más inestable","Variable, algo de lluvia","Inestable, breves intervalos buenos",
     "Inestable, lluvia después","Inestable, algo de lluvia","Muy inestable","Lluvia ocasional, empeorando",
     "Lluvia a ratos, muy inestable","Lluvia frecuente","Lluvia, muy inestable","Tormentoso, mucha lluvia","Tormentoso, muy húmedo"]
+};
+/* Fire-danger categories: emoji + colour + localised label per backend key. */
+const FIRE_CAT = {
+  low:      {emoji:"🟢", color:"var(--good)", de:"Niedrig",   en:"Low",       es:"Bajo"},
+  moderate: {emoji:"🟡", color:"var(--warn)", de:"Mäßig",     en:"Moderate",  es:"Moderado"},
+  high:     {emoji:"🟠", color:"#e8833a",     de:"Hoch",      en:"High",      es:"Alto"},
+  very_high:{emoji:"🔴", color:"var(--bad)",  de:"Sehr hoch", en:"Very high", es:"Muy alto"},
+  extreme:  {emoji:"⚫", color:"#7a1020",     de:"Extrem",    en:"Extreme",   es:"Extremo"}
 };
 let LANG = "de";
 const t = (k, vars={}) => {
@@ -589,6 +622,41 @@ function renderLocalForecast(lf){
      fill:true,tension:.35,pointRadius:0,spanGaps:true}]},options:opts});
 }
 
+function renderFireDanger(fd){
+  const el = $("firedanger");
+  if(!fd || fd.ffdi==null){ el.innerHTML = `<div class="skeleton">${t("fire_nodata")}</div>`; updateFireBanner(null); return; }
+  const cat = FIRE_CAT[fd.category] || FIRE_CAT.low;
+  const label = cat[LANG] || cat.de;
+  const c = fd.components || {};
+  const sub = `${fd.drought_days} ${t("fire_days_norain")} · ${fmt0(c.humidity)}% ${t("humidity")} · ${fmt0(c.wind_speed)} km/h ${t("wind")}`;
+  const dots = (fd.forecast||[]).map(d=>{
+    const fc = FIRE_CAT[d.category] || FIRE_CAT.low;
+    return `<div class="fire-day"><span class="pt" style="background:${fc.color}" title="FFDI ${fmt(d.ffdi)}"></span>${weekday(d.date)}</div>`;
+  }).join("");
+  el.innerHTML = `<div class="fire-wrap">
+    <div class="fire-main">
+      <div class="fire-emoji">${cat.emoji}</div>
+      <div>
+        <div class="fire-num" style="color:${cat.color}">${fmt(fd.ffdi)}</div>
+        <div class="fire-cat" style="color:${cat.color}">${label}</div>
+        <div class="fire-sub">${sub}</div>
+      </div>
+    </div>
+    <div class="fire-7d">${dots}</div>
+  </div>`;
+  updateFireBanner(fd);
+}
+function updateFireBanner(fd){
+  const b = $("fire-banner");
+  if(fd && (fd.category==="very_high" || fd.category==="extreme")){
+    const cat = FIRE_CAT[fd.category]; const label = cat[LANG] || cat.de;
+    b.innerHTML = `🔥 ${t("fire_warning",{label})}`;
+    b.className = "banner err show";
+  } else {
+    b.className = "banner err";
+  }
+}
+
 function renderDaily(fc){
   $("mc-pill").textContent = fc.microclimate?.active ? "🧠 Mikroklima aktiv" : "";
   $("daily").innerHTML = fc.days.map((d,i)=>{
@@ -729,6 +797,7 @@ async function refresh(){
   const calls = {
     current: api(siteParam("/current")),
     localforecast: api(siteParam("/local-forecast")),
+    fireDanger: api(siteParam("/fire-danger")),
     forecast: api(siteParam("/forecast")),
     hourly: api(siteParam("/forecast/hourly")),
     solar: api(siteParam(`/forecast/solar?pv_kwp=${pv}&pv_eff=${eff}`)),
@@ -753,6 +822,7 @@ async function refresh(){
     renderCurrent(c, results.localforecast);
   }
   if(results.localforecast) renderLocalForecast(results.localforecast);
+  if(results.fireDanger) renderFireDanger(results.fireDanger);
   if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
   if(results.hourly) renderHourly(results.hourly);
   if(results.history) renderCharts(results.history, results.battery);

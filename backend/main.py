@@ -23,6 +23,7 @@ import db
 import settings_store
 from collectors import ecowitt_collector
 from collector_manager import manager
+from reports import generator as report_generator
 from api import router as api_router
 from settings_api import router as settings_router
 
@@ -52,11 +53,20 @@ async def _startup() -> None:
     # set of collectors per configured site.
     settings_store.load()
     await manager.reload()
+
+    # Background report scheduler (weekly/monthly PDF e-mails). One global task.
+    global _report_task
+    _report_task = asyncio.create_task(report_generator.run_scheduler())
     log.info("backend ready (%d site(s) configured)", len(settings_store.sites()))
+
+
+_report_task: asyncio.Task | None = None
 
 
 async def _shutdown() -> None:
     await manager.stop()
+    if _report_task is not None:
+        _report_task.cancel()
     db.close()
     log.info("backend stopped")
 

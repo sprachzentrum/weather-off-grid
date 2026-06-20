@@ -84,6 +84,19 @@ ECOWITT_POLL_INTERVAL = _get_int("ECOWITT_POLL_INTERVAL", 300)
 GROWATT_POLL_INTERVAL = _get_int("GROWATT_POLL_INTERVAL", 300)
 OPENMETEO_POLL_INTERVAL = _get_int("OPENMETEO_POLL_INTERVAL", 21600)  # 6h
 
+# ── Reports (PDF via e-mail) ──────────────────────────────────────────────
+# SMTP transport credentials are secrets and live only here / in .env. The
+# recipient, on/off and weekly|monthly schedule are user-editable in
+# settings.json (these values seed the defaults on first start).
+SMTP_HOST = _get("SMTP_HOST")
+SMTP_PORT = _get_int("SMTP_PORT", 587)
+SMTP_USER = _get("SMTP_USER")
+SMTP_PASSWORD = _get("SMTP_PASSWORD")
+SMTP_STARTTLS = _get("SMTP_STARTTLS", "true").lower() not in ("0", "false", "no")
+REPORT_EMAIL_FROM = _get("REPORT_EMAIL_FROM")
+REPORT_EMAIL_TO = _get("REPORT_EMAIL_TO")
+REPORT_SCHEDULE = _get("REPORT_SCHEDULE", "weekly")  # weekly | monthly | off
+
 
 def ecowitt_enabled() -> bool:
     """API poller needs all three keys; the webhook works without them."""
@@ -92,3 +105,8 @@ def ecowitt_enabled() -> bool:
 
 def growatt_enabled() -> bool:
     return bool(GROWATT_USERNAME and GROWATT_PASSWORD)
+
+
+def smtp_enabled() -> bool:
+    """Reports can be e-mailed only when an SMTP host and a From address exist."""
+    return bool(SMTP_HOST and REPORT_EMAIL_FROM)

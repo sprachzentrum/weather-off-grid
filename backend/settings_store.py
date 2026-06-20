@@ -74,6 +74,16 @@ def _default_site_from_env() -> dict:
     }
 
 
+def _default_reports() -> dict:
+    """Seed the reports block from .env on first start (user-editable later)."""
+    schedule = config.REPORT_SCHEDULE if config.REPORT_SCHEDULE in ("weekly", "monthly") else "weekly"
+    return {
+        "enabled": bool(config.REPORT_EMAIL_TO) and config.REPORT_SCHEDULE != "off",
+        "email_to": config.REPORT_EMAIL_TO,
+        "schedule": schedule,
+    }
+
+
 def _default_state() -> dict:
     return {
         "version": SCHEMA_VERSION,
@@ -83,8 +93,16 @@ def _default_state() -> dict:
             "units": "metric",
             "refresh_interval": 300,
         },
+        "reports": _default_reports(),
         "sites": [_default_site_from_env()],
     }
+
+
+def reports_config() -> dict:
+    """Merged reports config (stored values over .env-seeded defaults)."""
+    cfg = _default_reports()
+    cfg.update(load().get("reports") or {})
+    return cfg
 
 
 def _normalise_site(site: dict, existing: dict | None = None) -> dict:
@@ -271,6 +289,7 @@ def public_settings() -> dict:
         "configured": is_configured(),
         "default_site": default_site_id(),
         "display": st.get("display", {}),
+        "reports": reports_config(),
         "sites": [_mask_site(s) for s in st.get("sites", [])],
     }
 
@@ -285,6 +304,8 @@ def apply_update(payload: dict) -> dict:
         st = load()
         if isinstance(payload.get("display"), dict):
             st.setdefault("display", {}).update(payload["display"])
+        if isinstance(payload.get("reports"), dict):
+            st.setdefault("reports", _default_reports()).update(payload["reports"])
         if isinstance(payload.get("sites"), list):
             existing_by_id = {s["site_id"]: s for s in st.get("sites", [])}
             new_sites = []

@@ -10,6 +10,7 @@ coordinates (cached per site). The microclimate model is computed per site.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import date, datetime, timedelta, timezone
 
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 
 import config
 import db
@@ -27,6 +29,7 @@ import settings_store
 from collectors import openmeteo_collector as om
 from forecast import microclimate
 from forecast import barometric
+from forecast import fire_danger
 
 log = logging.getLogger("api")
 router = APIRouter(prefix="/api")
@@ -641,6 +644,140 @@ async def energy_autonomy(
         # Backwards-compatible field (PV-aware days expressed in hours).
         "hours_remaining": _round(autonomy_days * 24, 1) if autonomy_days is not None else None,
     }
+
+
+# ── /api/fire-danger ───────────────────────────────────────────────────────
+def _daily_min_humidity(raw: dict) -> dict[str, float]:
+    """Minimum hourly relative humidity per local day from the forecast.
+
+    Fire weather is an afternoon phenomenon, so the day's *driest* hour drives
+    the danger rather than the daily mean. Open-Meteo's hourly humidity field is
+    `relativehumidity_2m`.
+    """
+    h = raw.get("hourly") or {}
+    times = h.get("time") or []
+    hum = h.get("relativehumidity_2m") or h.get("relative_humidity_2m") or []
+    per_day: dict[str, float] = {}
+    for i, t in enumerate(times):
+        val = hum[i] if i < len(hum) else None
+        if val is None:
+            continue
+        day = t[:10]
+        per_day[day] = min(per_day.get(day, float(val)), float(val))
+    return per_day
+
+
+@router.get("/fire-danger")
+async def fire_danger_endpoint(site: str | None = Query(None)):
+    """
+    Local Forest Fire Danger Index (McArthur FFDI, simplified).
+
+    Current value uses the live station readings (temperature, humidity, wind)
+    and the days since the last significant rain (> 2 mm). The 7-day forecast
+    applies the same formula to the Open-Meteo daily outlook, projecting the
+    drought factor forward (rain > 2 mm on a forecast day resets it).
+    """
+    s = _resolve_site(site)
+    sid = s["site_id"]
+    lang = (settings_store.load().get("display") or {}).get("language", "de")
+
+    weather = db.latest_fields(config.BUCKET_WEATHER, "station", site_id=sid)
+    raw = {}
+    try:
+        raw = await _forecast_raw(s)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[%s] forecast fetch for /fire-danger failed: %s", sid, exc)
+    cur = raw.get("current") or {}
+
+    # Live inputs: prefer the station, fall back to the regional current values.
+    temperature = weather.get("temperature_outdoor")
+    if temperature is None:
+        temperature = cur.get("temperature_2m")
+    humidity = weather.get("humidity_outdoor")
+    if humidity is None:
+        humidity = cur.get("relative_humidity_2m")
+    wind_speed = weather.get("wind_speed")
+    if wind_speed is None:
+        wind_speed = cur.get("wind_speed_10m")
+
+    today = _today_iso(raw)
+    dry_days = fire_danger.days_since_rain(sid, today)
+    df = fire_danger.drought_factor(dry_days)
+
+    ffdi = None
+    meta = fire_danger.categorise(0.0, lang)
+    if temperature is not None and humidity is not None and wind_speed is not None:
+        ffdi = fire_danger.compute_ffdi(
+            float(temperature), float(humidity), float(wind_speed), df
+        )
+        meta = fire_danger.categorise(ffdi, lang)
+
+    # 7-day forecast: project the drought factor forward day by day.
+    daily = raw.get("daily") or {}
+    days_iso = daily.get("time") or []
+    min_hum = _daily_min_humidity(raw)
+    forecast_list = []
+    proj_dry = dry_days
+    prev_day = today
+    for i, day_iso in enumerate(days_iso):
+        if day_iso < today:
+            continue
+        precip = om._at(daily, "precipitation_sum", i) or 0.0
+        if day_iso != prev_day:
+            # advance the dry-day counter for each elapsed day, resetting on rain
+            proj_dry = 0 if precip > fire_danger.SIGNIFICANT_RAIN_MM else proj_dry + 1
+        elif precip > fire_danger.SIGNIFICANT_RAIN_MM:
+            proj_dry = 0
+        prev_day = day_iso
+        t_max = om._at(daily, "temperature_2m_max", i)
+        wind_max = om._at(daily, "windspeed_10m_max", i)
+        rh = min_hum.get(day_iso)
+        if t_max is None or wind_max is None or rh is None:
+            continue
+        day_df = fire_danger.drought_factor(proj_dry)
+        day_ffdi = fire_danger.compute_ffdi(float(t_max), float(rh), float(wind_max), day_df)
+        forecast_list.append({
+            "date": day_iso,
+            "ffdi": day_ffdi,
+            "category": fire_danger.categorise(day_ffdi, lang)["category"],
+            "color": fire_danger.categorise(day_ffdi, lang)["color"],
+        })
+
+    return {
+        "site_id": sid,
+        "ffdi": ffdi,
+        "category": meta["category"],
+        "color": meta["color"],
+        "emoji": meta["emoji"],
+        "label": meta["label"],
+        "label_de": meta["label_de"],
+        "drought_days": dry_days,
+        "components": {
+            "temperature": _round(temperature),
+            "humidity": _round(humidity, 0),
+            "wind_speed": _round(wind_speed),
+            "drought_factor": round(df, 1),
+        },
+        "forecast": forecast_list[:7],
+    }
+
+
+# ── /api/reports/latest ────────────────────────────────────────────────────
+@router.get("/reports/latest")
+async def reports_latest(
+    site: str | None = Query(None),
+    period: str = Query("weekly"),
+):
+    """Serve the most recently generated PDF report for a site (download)."""
+    if period not in ("weekly", "monthly"):
+        raise HTTPException(status_code=400, detail="period must be weekly|monthly")
+    s = _resolve_site(site)
+    from reports import generator as reports_gen
+
+    path = reports_gen.latest_path(s["site_id"], period)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="no report generated yet")
+    return FileResponse(path, media_type="application/pdf", filename=os.path.basename(path))
 
 
 # ── /api/microclimate ──────────────────────────────────────────────────────

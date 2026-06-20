@@ -156,6 +156,24 @@
   </div>
 
   <div class="card">
+    <h2>📄 Berichte (global)</h2>
+    <p class="muted" style="margin:-4px 0 12px">Automatischer PDF-Bericht je Standort per E-Mail. SMTP-Zugangsdaten kommen aus der <code>.env</code>.</p>
+    <div class="grid2">
+      <div class="field"><label>E-Mail-Empfänger</label><input id="f-rep-email" type="email" placeholder="user@example.com"></div>
+      <div class="field"><label>Intervall</label><select id="f-rep-mode">
+        <option value="off">Aus</option>
+        <option value="weekly">Wöchentlich (Mo 08:00)</option>
+        <option value="monthly">Monatlich (1. um 08:00)</option>
+      </select></div>
+    </div>
+    <div class="btn-row">
+      <button class="ghost" id="btn-rep-test" type="button">Testbericht senden</button>
+      <span class="test-status" id="rep-test-status"></span>
+      <a id="rep-download" class="back" href="#" target="_blank" rel="noopener" style="margin-left:auto">⬇ Letzten Bericht herunterladen</a>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>🗄️ System</h2>
     <div id="system"><span class="muted">Lade Status …</span></div>
   </div>
@@ -309,7 +327,18 @@ function startAdmin(){
   $("f-lang").value = (MODEL.display&&MODEL.display.language)||"de";
   $("f-units").value = (MODEL.display&&MODEL.display.units)||"metric";
   $("f-refresh").value = (MODEL.display&&MODEL.display.refresh_interval)||300;
+  const r = MODEL.reports||{};
+  $("f-rep-email").value = r.email_to||"";
+  $("f-rep-mode").value = r.enabled ? (r.schedule||"weekly") : "off";
+  $("f-rep-mode").onchange = updateReportLink;
+  updateReportLink();
   bindTestButtons(document);
+}
+function reportPeriod(){ const m=$("f-rep-mode").value; return m==="off"?"weekly":m; }
+function updateReportLink(){
+  const site = MODEL.sites[CUR] && MODEL.sites[CUR].site_id;
+  const url = API+"/reports/latest?"+(site?("site="+encodeURIComponent(site)+"&"):"")+"period="+reportPeriod();
+  $("rep-download").href = url;
 }
 function renderSitesBar(){
   $("sites-bar").innerHTML = MODEL.sites.map((s,i)=>
@@ -325,6 +354,7 @@ function loadSiteIntoForm(){
   $("f-gw-plant").value=g.plant_id||""; $("f-gw-sn").value=g.inverter_sn||""; $("f-gw-server").value=g.server_url||"https://server.growatt.com";
   $("f-pv").value=s.pv_kwp??3.6; $("f-eff").value=s.pv_efficiency??0.75; $("f-cap").value=s.battery_capacity_kwh??9.6; $("f-wind").value=s.wind_threshold_kmh??10;
   document.querySelectorAll("[data-status]").forEach(el=>el.textContent="");
+  if($("rep-download")) updateReportLink();   // keep the download link on the active site
 }
 function collectForm(){
   const s = MODEL.sites[CUR]; if(!s) return;
@@ -350,14 +380,30 @@ $("btn-delete").onclick = ()=>{
 };
 $("btn-save").onclick = async ()=>{
   collectForm();
+  const repMode = $("f-rep-mode").value;
   const payload = {
     display:{language:$("f-lang").value,units:$("f-units").value,refresh_interval:parseInt($("f-refresh").value)||300},
+    reports:{enabled:repMode!=="off", schedule:repMode==="off"?((MODEL.reports&&MODEL.reports.schedule)||"weekly"):repMode, email_to:$("f-rep-email").value.trim()},
     sites: MODEL.sites.map(stripForSave),
   };
   $("btn-save").disabled=true;
   try{ MODEL = await apiSend("/settings","POST",payload); renderSitesBar(); toast("Gespeichert ✓"); loadSystem(); }
   catch(e){ handleErr(e); }
   finally{ $("btn-save").disabled=false; }
+};
+
+/* ── report test send ── */
+$("btn-rep-test").onclick = async ()=>{
+  const status = $("rep-test-status");
+  const email = $("f-rep-email").value.trim();
+  const site = MODEL.sites[CUR] && MODEL.sites[CUR].site_id;
+  status.textContent="… sende"; status.className="test-status";
+  $("btn-rep-test").disabled=true;
+  try{
+    const r = await apiSend("/reports/test","POST",{site_id:site, email_to:email||undefined, period:reportPeriod()});
+    status.textContent=(r.ok?"✓ ":"✗ ")+r.detail; status.className="test-status "+(r.ok?"ok":"err");
+  }catch(e){ status.textContent="Fehler"; status.className="test-status err"; handleErr(e,true); }
+  finally{ $("btn-rep-test").disabled=false; }
 };
 
 /* ── connection tests (shared by wizard + admin) ── */

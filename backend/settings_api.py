@@ -15,6 +15,7 @@ open (acceptable on a trusted local network, as documented).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
@@ -149,6 +150,33 @@ async def settings_test(payload: dict = Body(...)):
         ok = db.health()
         return {"ok": ok, "detail": "InfluxDB erreichbar" if ok else "InfluxDB nicht erreichbar"}
     raise HTTPException(status_code=400, detail="unknown service (ecowitt|growatt|influxdb)")
+
+
+@router.post("/reports/test", dependencies=[Depends(require_pin)])
+async def reports_test(payload: dict = Body(default={})):
+    """
+    Generate and e-mail a test report immediately. Body: {site_id?, period?,
+    email_to?}. Falls back to the stored reports config / default site.
+    """
+    from reports import generator as reports_gen
+
+    cfg = settings_store.reports_config()
+    period = payload.get("period") or cfg.get("schedule") or "weekly"
+    if period not in ("weekly", "monthly"):
+        period = "weekly"
+    recipient = payload.get("email_to") or cfg.get("email_to") or config.REPORT_EMAIL_TO
+    if not config.smtp_enabled():
+        return {"ok": False, "detail": "SMTP nicht konfiguriert (.env: SMTP_HOST, REPORT_EMAIL_FROM)"}
+    if not recipient:
+        return {"ok": False, "detail": "Keine Empfänger-E-Mail eingetragen"}
+    site = settings_store.get_site(payload.get("site_id"))
+    if site is None:
+        return {"ok": False, "detail": "Kein Standort konfiguriert"}
+    try:
+        await asyncio.to_thread(reports_gen.generate_and_send, site["site_id"], period, recipient)
+        return {"ok": True, "detail": f"Testbericht gesendet an {recipient}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "detail": str(exc)}
 
 
 def _iso(value):

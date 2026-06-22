@@ -353,6 +353,7 @@ const I18N = {
     planting_title:"Pflanzkalender Gemüse",planting_sow:"Aussaat",planting_plant:"Pflanzen/Setzen",planting_harvest:"Ernte",
     planting_sow_now:"Diesen Monat säen/pflanzen:",planting_nothing:"Diesen Monat nichts Neues aussäen.",planting_frost_hint:"frostempfindlich – erst nach den letzten Frösten",
     sort_by:"Sortieren:",sort_cat:"Kategorie",sort_sow:"Aussaatmonat",
+    planting_source:"Termine angelehnt an „La Huerta en tu Hogar“ (Gobierno de Córdoba) & INTA; übrige Kulturen eigene Richtwerte.",
     planting_cat_veg:"Gemüse",planting_cat_tree:"Aufforstung (heimische Bäume)",planting_tree_hint:"Bäume = jährlicher Aufgaben-Zyklus (kein Lebenslauf eines Baums): „Aussaat“ = Anzucht/Vorziehen · „Pflanzen“ = Auspflanzen · „Ernte“ = Samen von ausgewachsenen Bäumen sammeln",
     season_title:"Gartensaison-Analyse",season_intro:"Monatsmittel & Frostnächte aus euren Stationsdaten:",season_meanmin:"Ø Tiefsttemperatur pro Monat",
     season_last_spring:"Letzter Frühjahrsfrost",season_first_autumn:"Erster Herbstfrost",season_frostdays:"Frostnächte gesamt",
@@ -386,6 +387,7 @@ const I18N = {
     planting_title:"Vegetable planting calendar",planting_sow:"Sow",planting_plant:"Plant out",planting_harvest:"Harvest",
     planting_sow_now:"Sow/plant this month:",planting_nothing:"Nothing new to sow this month.",planting_frost_hint:"frost-sensitive – only after the last frost",
     sort_by:"Sort:",sort_cat:"Category",sort_sow:"Sowing month",
+    planting_source:"Windows based on “La Huerta en tu Hogar” (Gobierno de Córdoba) & INTA; other crops are our own guideline values.",
     planting_cat_veg:"Vegetables",planting_cat_tree:"Reforestation (native trees)",planting_tree_hint:"Trees = yearly task cycle (not one tree's lifecycle): “Sow” = raise in nursery · “Plant out” = plant out · “Harvest” = collect seed from mature trees",
     season_title:"Garden-season analysis",season_intro:"Monthly means & frost nights from your station data:",season_meanmin:"Avg. minimum temperature per month",
     season_last_spring:"Last spring frost",season_first_autumn:"First autumn frost",season_frostdays:"Total frost nights",
@@ -419,6 +421,7 @@ const I18N = {
     planting_title:"Calendario de siembra",planting_sow:"Siembra",planting_plant:"Plantar",planting_harvest:"Cosecha",
     planting_sow_now:"Sembrar/plantar este mes:",planting_nothing:"Nada nuevo para sembrar este mes.",planting_frost_hint:"sensible a heladas – solo tras las últimas heladas",
     sort_by:"Ordenar:",sort_cat:"Categoría",sort_sow:"Mes de siembra",
+    planting_source:"Fechas basadas en “La Huerta en tu Hogar” (Gobierno de Córdoba) e INTA; otros cultivos son valores propios orientativos.",
     planting_cat_veg:"Hortalizas",planting_cat_tree:"Reforestación (árboles nativos)",planting_tree_hint:"Árboles = ciclo anual de tareas (no la vida de un árbol): “Siembra” = almácigo · “Plantar” = trasplante · “Cosecha” = recolectar semillas de árboles maduros",
     season_title:"Análisis de temporada",season_intro:"Promedios mensuales y noches de helada de tu estación:",season_meanmin:"Temperatura mínima media por mes",
     season_last_spring:"Última helada de primavera",season_first_autumn:"Primera helada de otoño",season_frostdays:"Noches de helada totales",
@@ -843,7 +846,8 @@ function renderPlanting(pl){
       <span><span class="k pcal-p"></span>${t("planting_plant")}</span>
       <span><span class="k pcal-h"></span>${t("planting_harvest")}</span>
       ${hasTree?`<span class="fire-sub">${t("planting_tree_hint")}</span>`:""}
-    </div>`;
+    </div>
+    <div class="seas-note">${t("planting_source")}</div>`;
   el.querySelectorAll(".pcal-sortb").forEach(b=>b.addEventListener("click",()=>setPlantingSort(b.dataset.sort)));
 }
 

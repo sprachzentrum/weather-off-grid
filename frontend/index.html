@@ -294,7 +294,7 @@ const I18N = {
     hit_rate:"Treffer Regen",temp_dev:"Ø Temp-Abweichung",wind_corr:"Wind-Korrektur",days_data:"Tage Daten",
     learning:"Lernphase",mc_learning:"Sammelt Daten … {n}/{m} Tage bis zur Aktivierung",
     setup_title:"Einrichtung nötig",first_run:"Noch nicht eingerichtet",open_setup:"Jetzt einrichten",no_conn:"Keine Verbindung zum Backend – zeige zuletzt gespeicherte Daten.",
-    offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)",
+    offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)",battery_no_data:"Keine aktuellen Energiedaten – Growatt-Sync prüfen",
     local_forecast:"Lokale Prognose",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Lokal",lf_regional:"Open-Meteo",lf_rain:"Regen",lf_norain:"kein Regen",
     lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar",
@@ -315,7 +315,7 @@ const I18N = {
     hit_rate:"Rain hit rate",temp_dev:"Avg temp deviation",wind_corr:"Wind correction",days_data:"Days of data",
     learning:"Learning",mc_learning:"Collecting data … {n}/{m} days until activation",
     setup_title:"Setup required",first_run:"Not configured yet",open_setup:"Set up now",no_conn:"No backend connection – showing last saved data.",
-    offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)",
+    offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)",battery_no_data:"No recent energy data – check Growatt sync",
     local_forecast:"Local outlook",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"rain",lf_norain:"no rain",
     lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available",
@@ -336,7 +336,7 @@ const I18N = {
     hit_rate:"Acierto lluvia",temp_dev:"Desv. temp media",wind_corr:"Corrección viento",days_data:"Días de datos",
     learning:"Aprendiendo",mc_learning:"Recopilando datos … {n}/{m} días hasta activar",
     setup_title:"Configuración necesaria",first_run:"Aún sin configurar",open_setup:"Configurar ahora",no_conn:"Sin conexión al backend – mostrando últimos datos.",
-    offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)",
+    offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)",battery_no_data:"Sin datos de energía recientes – revisar sincronización Growatt",
     local_forecast:"Pronóstico local",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"lluvia",lf_norain:"sin lluvia",
     lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión",
@@ -516,7 +516,11 @@ const hhmm = iso => { const d=new Date(iso); return String(d.getHours()).padStar
    ============================================================ */
 function renderBattery(cur, energyToday, autonomy){
   const b = cur.battery;
-  if(!b){ $("battery").innerHTML = `<div class="skeleton">${t("no_battery")}</div>`; return; }
+  if(!b){
+    // Distinguish "Growatt not set up" from "set up but no recent data" (sync issue).
+    const msg = SITECFG.has_battery ? t("battery_no_data") : t("no_battery");
+    $("battery").innerHTML = `<div class="skeleton">${msg}</div>`; return;
+  }
   const soc = b.battery_soc ?? 0;
   const color = soc>50?"var(--good)":soc>20?"var(--warn)":"var(--bad)";
   const power = b.battery_power ?? 0;

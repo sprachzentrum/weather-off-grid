@@ -359,13 +359,27 @@ def _growatt_ready(site: dict) -> bool:
 
 
 def _poll_blocking(session: GrowattSession | None, creds: dict) -> tuple[GrowattSession, dict]:
-    """Synchronous poll run in a worker thread; (re)logs in as needed."""
+    """Synchronous poll run in a worker thread; (re)logs in as needed.
+
+    The ShinePhone session silently expires after a while. When it does, the
+    detail endpoints return a login redirect rather than data, and `fetch()`
+    swallows the resulting per-endpoint errors and yields an empty dict instead
+    of raising - so we cannot rely on an exception to detect a dead session.
+    Instead, treat an empty/unusable result on a *reused* session as a likely
+    expiry and re-login once before giving up for this cycle. An empty result
+    right after a fresh login is a genuine "no data right now" (e.g. the
+    inverter is asleep at night), so we do not re-login again in that case.
+    """
+    relogged = False
     if session is None or session.api is None:
         session = GrowattSession(creds)
         session.login()
+        relogged = True
     try:
         raw = session.fetch()
-    except Exception:  # noqa: BLE001 - likely an expired session, retry once
+    except Exception:  # noqa: BLE001 - treat like an empty result below
+        raw = {}
+    if not extract_fields(raw) and not relogged:
         session = GrowattSession(creds)
         session.login()
         raw = session.fetch()

@@ -174,7 +174,7 @@ _SPRING_MONTHS_S = {8, 9, 10, 11}
 _AUTUMN_MONTHS_S = {3, 4, 5, 6}
 
 
-def season_stats(site_id: str | None, days: int = 400,
+def season_stats(site_id: str | None, days: int = 1500,
                  hemisphere: str = "south") -> dict | None:
     """
     Climatology from the station's own history, to sanity-check when the garden

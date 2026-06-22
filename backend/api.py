@@ -946,7 +946,7 @@ async def planting_endpoint(site: str | None = Query(None)):
 # ── /api/season ────────────────────────────────────────────────────────────
 @router.get("/season")
 async def season_endpoint(site: str | None = Query(None),
-                          days: int = Query(400, ge=60, le=1825)):
+                          days: int = Query(1500, ge=60, le=3650)):
     """
     Garden-season climatology from the station's own history: per-month mean
     min/max temperature and frost-night counts, plus the latest spring frost and

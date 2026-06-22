@@ -31,6 +31,7 @@ from forecast import microclimate
 from forecast import barometric
 from forecast import fire_danger
 from forecast import frost
+from forecast import planting
 
 log = logging.getLogger("api")
 router = APIRouter(prefix="/api")
@@ -916,6 +917,29 @@ async def frost_endpoint(
                         "range_c": [frost.CHILL_LOW, frost.CHILL_HIGH]},
         "gdd": {"window_days": gdd_days, "base_c": frost.GDD_BASE,
                 "sum": frost.growing_degree_days(sid, gdd_days)},
+    }
+
+
+# ── /api/planting ──────────────────────────────────────────────────────────
+@router.get("/planting")
+async def planting_endpoint(site: str | None = Query(None)):
+    """
+    Vegetable-garden planting calendar for the site, hemisphere-aware.
+
+    Returns each crop's sow / transplant / harvest months (1–12), the current
+    local month, and which crops can be sown/planted right now.
+    """
+    s = _resolve_site(site)
+    hemisphere = planting.hemisphere_for(s.get("latitude"))
+    crops = planting.calendar(hemisphere)
+    month = datetime.now(_site_tz(s)).month
+    sow_now = [c["key"] for c in crops if month in c["sow"] or month in c["transplant"]]
+    return {
+        "site_id": s["site_id"],
+        "hemisphere": hemisphere,
+        "current_month": month,
+        "crops": crops,
+        "sow_now": sow_now,
     }
 
 

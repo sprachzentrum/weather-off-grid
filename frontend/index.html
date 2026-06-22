@@ -110,6 +110,20 @@
   .fire-day{text-align:center;font-size:.66rem;color:var(--dim)}
   .fire-day .pt{display:block;width:22px;height:22px;border-radius:7px;margin:0 auto 3px}
   .frost-foot{margin-top:12px;padding-top:10px;border-top:1px solid #22223f;font-size:.86rem;display:flex;gap:22px;flex-wrap:wrap}
+  .pcal-now{margin-bottom:12px;font-size:.9rem}
+  .pcal-now b{color:var(--good)}
+  .pcal-scroll{overflow-x:auto}
+  table.pcal{border-collapse:collapse;width:100%;min-width:560px;font-size:.8rem}
+  table.pcal th,table.pcal td{padding:5px 4px;text-align:center}
+  table.pcal th{color:var(--dim);font-weight:600}
+  table.pcal td.crop,table.pcal th.crop{text-align:left;white-space:nowrap;color:var(--txt);font-weight:600;padding-right:10px}
+  table.pcal th.mnow{color:var(--good)}
+  table.pcal td.cell{border-radius:5px}
+  table.pcal td.cnow{box-shadow:inset 0 0 0 2px var(--good)}
+  .pcal-cell{display:block;height:16px;border-radius:4px}
+  .pcal-s{background:var(--good)} .pcal-p{background:#4895ef} .pcal-h{background:#f4a261}
+  .pcal-leg{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:.82rem;color:var(--dim);align-items:center}
+  .pcal-leg span.k{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:5px}
 
   /* horizontal scrollers */
   .scroll{display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;scroll-snap-type:x proximity}
@@ -239,6 +253,11 @@
     <div class="card" id="frost"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
+  <section id="sec-planting">
+    <h2>🌱 <span data-i18n="planting_title">Pflanzkalender Gemüse</span></h2>
+    <div class="card" id="planting"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
   <!-- 4. 7-day forecast -->
   <section>
     <h2 data-i18n="forecast_7d">7-Tage-Vorhersage <span class="pill" id="mc-pill"></span></h2>
@@ -312,7 +331,10 @@ const I18N = {
     frost_title:"Frost & Obstbau",frost_pill:"FROST",frost_nodata:"Keine Frostdaten verfügbar",
     frost_tonight_low:"Kommende Nacht",frost_from:"Frost ab",frost_point:"Frostpunkt",
     frost_tonight:"Frost heute Nacht",frost_next_in:"Nächster Frost in {n} Nächten",frost_none_week:"Diese Woche kein Frost",
-    chill_hours:"Kältestunden",gdd:"Wärmesumme (GDD)",base:"Basis",frost_warning:"❄️ Frostgefahr heute Nacht: {temp}°"},
+    chill_hours:"Kältestunden",gdd:"Wärmesumme (GDD)",base:"Basis",frost_warning:"❄️ Frostgefahr heute Nacht: {temp}°",
+    planting_title:"Pflanzkalender Gemüse",planting_sow:"Aussaat",planting_plant:"Pflanzen/Vorziehen",planting_harvest:"Ernte",
+    planting_sow_now:"Diesen Monat säen/pflanzen:",planting_nothing:"Diesen Monat nichts Neues aussäen.",planting_frost_hint:"frostempfindlich – erst nach den letzten Frösten",
+    months_short:["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"]},
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
     charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
@@ -337,7 +359,10 @@ const I18N = {
     frost_title:"Frost & orchard",frost_pill:"FROST",frost_nodata:"No frost data available",
     frost_tonight_low:"Coming night",frost_from:"Frost from",frost_point:"Frost point",
     frost_tonight:"Frost tonight",frost_next_in:"Next frost in {n} nights",frost_none_week:"No frost this week",
-    chill_hours:"Chill hours",gdd:"Growing degree days",base:"base",frost_warning:"❄️ Frost risk tonight: {temp}°"},
+    chill_hours:"Chill hours",gdd:"Growing degree days",base:"base",frost_warning:"❄️ Frost risk tonight: {temp}°",
+    planting_title:"Vegetable planting calendar",planting_sow:"Sow",planting_plant:"Plant/raise",planting_harvest:"Harvest",
+    planting_sow_now:"Sow/plant this month:",planting_nothing:"Nothing new to sow this month.",planting_frost_hint:"frost-sensitive – only after the last frost",
+    months_short:["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]},
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
     charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
@@ -362,7 +387,10 @@ const I18N = {
     frost_title:"Heladas y huerta",frost_pill:"HELADA",frost_nodata:"Sin datos de heladas",
     frost_tonight_low:"Próxima noche",frost_from:"Helada desde",frost_point:"Punto de helada",
     frost_tonight:"Helada esta noche",frost_next_in:"Próxima helada en {n} noches",frost_none_week:"Sin heladas esta semana",
-    chill_hours:"Horas de frío",gdd:"Grados-día (GDD)",base:"base",frost_warning:"❄️ Riesgo de helada esta noche: {temp}°"}
+    chill_hours:"Horas de frío",gdd:"Grados-día (GDD)",base:"base",frost_warning:"❄️ Riesgo de helada esta noche: {temp}°",
+    planting_title:"Calendario de siembra",planting_sow:"Siembra",planting_plant:"Plantar/almácigo",planting_harvest:"Cosecha",
+    planting_sow_now:"Sembrar/plantar este mes:",planting_nothing:"Nada nuevo para sembrar este mes.",planting_frost_hint:"sensible a heladas – solo tras las últimas heladas",
+    months_short:["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]}
 };
 /* Zambretti forecast texts, index 0 (best) .. 25 (worst). */
 const ZAMBRETTI = {
@@ -737,6 +765,35 @@ function updateFrostBanner(fr){
   }
 }
 
+function renderPlanting(pl){
+  const el = $("planting");
+  if(!pl || !pl.crops || !pl.crops.length){ el.innerHTML = `<div class="skeleton">–</div>`; return; }
+  const months = t("months_short"), cm = pl.current_month;
+  const nm = c => c[LANG] || c.de;
+  const nowCrops = pl.crops.filter(c => (pl.sow_now||[]).includes(c.key));
+  const nowTxt = nowCrops.length
+    ? `${t("planting_sow_now")} <b>${nowCrops.map(c=>`${c.emoji} ${nm(c)}`).join(", ")}</b>`
+    : t("planting_nothing");
+  const head = `<th class="crop"></th>` + months.map((m,i)=>`<th class="${i+1===cm?"mnow":""}">${m}</th>`).join("");
+  const rows = pl.crops.map(c=>{
+    let cells = "";
+    for(let mo=1; mo<=12; mo++){
+      const cls = c.sow.includes(mo) ? "pcal-s" : c.transplant.includes(mo) ? "pcal-p" : c.harvest.includes(mo) ? "pcal-h" : "";
+      cells += `<td class="cell ${mo===cm?"cnow":""}">${cls?`<span class="pcal-cell ${cls}"></span>`:""}</td>`;
+    }
+    const fr = c.frost_sensitive ? ` <span title="${t("planting_frost_hint")}">❄️</span>` : "";
+    return `<tr><td class="crop" title="${c.note_de||""}">${c.emoji} ${nm(c)}${fr}</td>${cells}</tr>`;
+  }).join("");
+  el.innerHTML = `<div class="pcal-now">${nowTxt}</div>
+    <div class="pcal-scroll"><table class="pcal">
+      <thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="pcal-leg">
+      <span><span class="k pcal-s"></span>${t("planting_sow")}</span>
+      <span><span class="k pcal-p"></span>${t("planting_plant")}</span>
+      <span><span class="k pcal-h"></span>${t("planting_harvest")}</span>
+    </div>`;
+}
+
 function renderDaily(fc){
   $("mc-pill").textContent = fc.microclimate?.active ? "🧠 Mikroklima aktiv" : "";
   $("daily").innerHTML = fc.days.map((d,i)=>{
@@ -889,6 +946,7 @@ async function refresh(){
     localforecast: api(siteParam("/local-forecast")),
     fireDanger: api(siteParam("/fire-danger")),
     frost: api(siteParam("/frost")),
+    planting: api(siteParam("/planting")),
     forecast: api(siteParam("/forecast")),
     hourly: api(siteParam("/forecast/hourly")),
     solar: api(siteParam(`/forecast/solar?pv_kwp=${pv}&pv_eff=${eff}`)),
@@ -916,6 +974,7 @@ async function refresh(){
   if(results.localforecast) renderLocalForecast(results.localforecast);
   if(results.fireDanger) renderFireDanger(results.fireDanger);
   if(results.frost) renderFrost(results.frost);
+  if(results.planting) renderPlanting(results.planting);
   if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
   if(results.hourly) renderHourly(results.hourly);
   if(results.history) renderCharts(results.history, results.battery, results.nights);

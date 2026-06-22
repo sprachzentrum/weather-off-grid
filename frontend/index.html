@@ -109,6 +109,7 @@
   .fire-7d{display:flex;gap:7px;flex-wrap:wrap;flex:1;min-width:210px;justify-content:flex-end}
   .fire-day{text-align:center;font-size:.66rem;color:var(--dim)}
   .fire-day .pt{display:block;width:22px;height:22px;border-radius:7px;margin:0 auto 3px}
+  .frost-foot{margin-top:12px;padding-top:10px;border-top:1px solid #22223f;font-size:.86rem;display:flex;gap:22px;flex-wrap:wrap}
 
   /* horizontal scrollers */
   .scroll{display:flex;gap:12px;overflow-x:auto;padding:4px 4px 10px;scroll-snap-type:x proximity}
@@ -204,6 +205,8 @@
   <div id="banner" class="banner"></div>
   <!-- Fire-danger warning banner (very high / extreme only) -->
   <div id="fire-banner" class="banner err"></div>
+  <!-- Frost warning banner (frost expected tonight) -->
+  <div id="frost-banner" class="banner warn"></div>
 
   <!-- 2. Battery -->
   <section id="sec-battery">
@@ -229,6 +232,11 @@
   <section id="sec-firedanger">
     <h2>🔥 <span data-i18n="fire_danger">Feuerrisiko</span> <span class="pill" data-i18n="fire_ffdi">FFDI</span></h2>
     <div class="card" id="firedanger"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <section id="sec-frost">
+    <h2>🌱 <span data-i18n="frost_title">Frost &amp; Obstbau</span> <span class="pill" data-i18n="frost_pill">FROST</span></h2>
+    <div class="card" id="frost"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
   <!-- 4. 7-day forecast -->
@@ -300,7 +308,11 @@ const I18N = {
     lf_local:"Lokal",lf_regional:"Open-Meteo",lf_rain:"Regen",lf_norain:"kein Regen",
     lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar",
     fire_danger:"Feuerrisiko",fire_ffdi:"FFDI",fire_days_norain:"Tage ohne Regen",
-    fire_warning:"Feuerrisiko {label} — höchste Vorsicht",fire_nodata:"Keine Sensordaten für den Feuerindex"},
+    fire_warning:"Feuerrisiko {label} — höchste Vorsicht",fire_nodata:"Keine Sensordaten für den Feuerindex",
+    frost_title:"Frost & Obstbau",frost_pill:"FROST",frost_nodata:"Keine Frostdaten verfügbar",
+    frost_tonight_low:"Kommende Nacht",frost_from:"Frost ab",frost_point:"Frostpunkt",
+    frost_tonight:"Frost heute Nacht",frost_next_in:"Nächster Frost in {n} Nächten",frost_none_week:"Diese Woche kein Frost",
+    chill_hours:"Kältestunden",gdd:"Wärmesumme (GDD)",base:"Basis",frost_warning:"❄️ Frostgefahr heute Nacht: {temp}°"},
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
     charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
@@ -321,7 +333,11 @@ const I18N = {
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"rain",lf_norain:"no rain",
     lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available",
     fire_danger:"Fire danger",fire_ffdi:"FFDI",fire_days_norain:"days without rain",
-    fire_warning:"Fire danger {label} — extreme caution",fire_nodata:"No sensor data for the fire index"},
+    fire_warning:"Fire danger {label} — extreme caution",fire_nodata:"No sensor data for the fire index",
+    frost_title:"Frost & orchard",frost_pill:"FROST",frost_nodata:"No frost data available",
+    frost_tonight_low:"Coming night",frost_from:"Frost from",frost_point:"Frost point",
+    frost_tonight:"Frost tonight",frost_next_in:"Next frost in {n} nights",frost_none_week:"No frost this week",
+    chill_hours:"Chill hours",gdd:"Growing degree days",base:"base",frost_warning:"❄️ Frost risk tonight: {temp}°"},
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
     charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
@@ -342,7 +358,11 @@ const I18N = {
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"lluvia",lf_norain:"sin lluvia",
     lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión",
     fire_danger:"Riesgo de incendio",fire_ffdi:"FFDI",fire_days_norain:"días sin lluvia",
-    fire_warning:"Riesgo de incendio {label} — máxima precaución",fire_nodata:"Sin datos del sensor para el índice"}
+    fire_warning:"Riesgo de incendio {label} — máxima precaución",fire_nodata:"Sin datos del sensor para el índice",
+    frost_title:"Heladas y huerta",frost_pill:"HELADA",frost_nodata:"Sin datos de heladas",
+    frost_tonight_low:"Próxima noche",frost_from:"Helada desde",frost_point:"Punto de helada",
+    frost_tonight:"Helada esta noche",frost_next_in:"Próxima helada en {n} noches",frost_none_week:"Sin heladas esta semana",
+    chill_hours:"Horas de frío",gdd:"Grados-día (GDD)",base:"base",frost_warning:"❄️ Riesgo de helada esta noche: {temp}°"}
 };
 /* Zambretti forecast texts, index 0 (best) .. 25 (worst). */
 const ZAMBRETTI = {
@@ -372,6 +392,14 @@ const FIRE_CAT = {
   high:     {emoji:"🟠", color:"#e8833a",     de:"Hoch",      en:"High",      es:"Alto"},
   very_high:{emoji:"🔴", color:"var(--bad)",  de:"Sehr hoch", en:"Very high", es:"Muy alto"},
   extreme:  {emoji:"⚫", color:"#7a1020",     de:"Extrem",    en:"Extreme",   es:"Extremo"}
+};
+const FROST_CAT = {
+  none:    {emoji:"🟢", color:"var(--good)", de:"Kein Frost",         en:"No frost",             es:"Sin helada"},
+  ground:  {emoji:"🟡", color:"var(--warn)", de:"Bodenfrost möglich", en:"Ground frost possible",es:"Posible helada de suelo"},
+  light:   {emoji:"🟠", color:"#e8833a",     de:"Leichter Frost",     en:"Light frost",          es:"Helada leve"},
+  moderate:{emoji:"🔴", color:"var(--bad)",  de:"Mäßiger Frost",      en:"Moderate frost",       es:"Helada moderada"},
+  severe:  {emoji:"⚫", color:"#7a1020",     de:"Strenger Frost",     en:"Severe frost",         es:"Helada severa"},
+  unknown: {emoji:"⚪", color:"var(--dim)",  de:"Keine Daten",        en:"No data",              es:"Sin datos"}
 };
 let LANG = "de";
 const t = (k, vars={}) => {
@@ -666,6 +694,49 @@ function updateFireBanner(fd){
   }
 }
 
+function renderFrost(fr){
+  const el = $("frost");
+  if(!fr || !fr.tonight || fr.tonight.min_temp==null){ el.innerHTML = `<div class="skeleton">${t("frost_nodata")}</div>`; updateFrostBanner(null); return; }
+  const tn = fr.tonight;
+  const cat = FROST_CAT[tn.category] || FROST_CAT.unknown;
+  const label = cat[LANG] || cat.de;
+  const parts = [];
+  if(tn.frost && tn.frost_from) parts.push(`${t("frost_from")} ${tn.frost_from}`);
+  if(tn.frost_point!=null) parts.push(`${t("frost_point")} ${fmt(tn.frost_point,1)}°`);
+  if(fr.next_frost){ const nu=fr.next_frost.nights_until; parts.push(nu===0?t("frost_tonight"):t("frost_next_in",{n:nu})); }
+  else parts.push(t("frost_none_week"));
+  const dots = (fr.forecast||[]).map(d=>{
+    const fc = FROST_CAT[d.category] || FROST_CAT.unknown;
+    return `<div class="fire-day"><span class="pt" style="background:${fc.color}" title="${fmt(d.min_temp,1)}°"></span>${weekday(d.date)}
+      <div style="font-weight:600;color:var(--txt)">${d.min_temp!=null?fmt0(d.min_temp)+"°":"–"}</div></div>`;
+  }).join("");
+  const ch = fr.chill_hours||{}, g = fr.gdd||{};
+  const foot = [];
+  if(ch.hours!=null) foot.push(`❄️ ${t("chill_hours")}: <b>${ch.hours}</b> h <span class="fire-sub">(${ch.window_days} ${t("days")})</span>`);
+  if(g.sum!=null) foot.push(`🌱 ${t("gdd")}: <b>${fmt(g.sum,0)}</b> <span class="fire-sub">(${t("base")} ${fmt0(g.base_c)}°, ${g.window_days} ${t("days")})</span>`);
+  el.innerHTML = `<div class="fire-wrap">
+    <div class="fire-main">
+      <div class="fire-emoji">${cat.emoji}</div>
+      <div>
+        <div class="fire-num" style="color:${cat.color}">${fmt(tn.min_temp,1)}°</div>
+        <div class="fire-cat" style="color:${cat.color}">${label}</div>
+        <div class="fire-sub">${t("frost_tonight_low")} · ${parts.join(" · ")}</div>
+      </div>
+    </div>
+    <div class="fire-7d">${dots}</div>
+  </div>${foot.length?`<div class="frost-foot">${foot.join("")}</div>`:""}`;
+  updateFrostBanner(fr);
+}
+function updateFrostBanner(fr){
+  const b = $("frost-banner");
+  if(fr && fr.tonight && fr.tonight.frost && fr.tonight.min_temp!=null){
+    b.innerHTML = t("frost_warning",{temp:fmt(fr.tonight.min_temp,1)}) + (fr.tonight.frost_from?` (${t("frost_from")} ${fr.tonight.frost_from})`:"");
+    b.className = "banner warn show";
+  } else {
+    b.className = "banner warn";
+  }
+}
+
 function renderDaily(fc){
   $("mc-pill").textContent = fc.microclimate?.active ? "🧠 Mikroklima aktiv" : "";
   $("daily").innerHTML = fc.days.map((d,i)=>{
@@ -817,6 +888,7 @@ async function refresh(){
     current: api(siteParam("/current")),
     localforecast: api(siteParam("/local-forecast")),
     fireDanger: api(siteParam("/fire-danger")),
+    frost: api(siteParam("/frost")),
     forecast: api(siteParam("/forecast")),
     hourly: api(siteParam("/forecast/hourly")),
     solar: api(siteParam(`/forecast/solar?pv_kwp=${pv}&pv_eff=${eff}`)),
@@ -843,6 +915,7 @@ async function refresh(){
   }
   if(results.localforecast) renderLocalForecast(results.localforecast);
   if(results.fireDanger) renderFireDanger(results.fireDanger);
+  if(results.frost) renderFrost(results.frost);
   if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
   if(results.hourly) renderHourly(results.hourly);
   if(results.history) renderCharts(results.history, results.battery, results.nights);

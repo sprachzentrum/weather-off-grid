@@ -30,6 +30,7 @@ from collectors import openmeteo_collector as om
 from forecast import microclimate
 from forecast import barometric
 from forecast import fire_danger
+from forecast import frost
 
 log = logging.getLogger("api")
 router = APIRouter(prefix="/api")
@@ -819,6 +820,102 @@ async def fire_danger_endpoint(site: str | None = Query(None)):
             "drought_factor": round(df, 1),
         },
         "forecast": forecast_list[:7],
+    }
+
+
+# ── /api/frost ─────────────────────────────────────────────────────────────
+@router.get("/frost")
+async def frost_endpoint(
+    site: str | None = Query(None),
+    chill_days: int = Query(60, ge=1, le=180),
+    gdd_days: int = Query(30, ge=1, le=180),
+):
+    """
+    Frost forecast + fruit-growing metrics for one site.
+
+    The coming night's low, the hour frost is expected to set in and the dew/
+    frost point come from the hourly Open-Meteo forecast (next 24 h); the 7-day
+    outlook uses the daily minimum. Chill hours and growing degree days are
+    accumulated from the station history in InfluxDB.
+    """
+    s = _resolve_site(site)
+    sid = s["site_id"]
+    lang = (settings_store.load().get("display") or {}).get("language", "de")
+    tz = _site_tz(s)
+
+    raw = {}
+    try:
+        raw = await _forecast_raw(s)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[%s] forecast fetch for /frost failed: %s", sid, exc)
+    hourly = raw.get("hourly") or {}
+    daily = raw.get("daily") or {}
+
+    # Coming night: minimum over the next 24 h of the hourly forecast.
+    now_local = datetime.now(tz)
+    times = hourly.get("time") or []
+    temps = hourly.get("temperature_2m") or []
+    hums = hourly.get("relativehumidity_2m") or hourly.get("relative_humidity_2m") or []
+    tonight_min = tonight_rh = frost_from = None
+    for i, t in enumerate(times):
+        dt = _parse_iso(t)
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=tz)
+        delta_h = (dt - now_local).total_seconds() / 3600.0
+        if delta_h < 0 or delta_h > 24:
+            continue
+        temp = temps[i] if i < len(temps) else None
+        if temp is None:
+            continue
+        temp = float(temp)
+        if tonight_min is None or temp < tonight_min:
+            tonight_min = temp
+            tonight_rh = float(hums[i]) if i < len(hums) and hums[i] is not None else None
+        if frost_from is None and temp <= frost.FROST_THRESHOLD:
+            frost_from = dt.strftime("%H:%M")
+
+    tcat = frost.categorise_low(_round(tonight_min, 1), lang)
+    tonight = {
+        "min_temp": _round(tonight_min, 1),
+        "category": tcat["category"],
+        "color": tcat["color"],
+        "emoji": tcat["emoji"],
+        "label": tcat["label"],
+        "frost": frost.is_frost(tonight_min),
+        "frost_from": frost_from,
+        "frost_point": frost.dew_point(tonight_min, tonight_rh) if (tonight_min is not None and tonight_rh is not None) else None,
+    }
+
+    # 7-day outlook from the daily minimum; flag the next frost night.
+    today = _today_iso(raw)
+    days_iso = daily.get("time") or []
+    mins = daily.get("temperature_2m_min") or []
+    outlook: list[dict] = []
+    next_frost = None
+    for i, day_iso in enumerate(days_iso):
+        if day_iso < today:
+            continue
+        mn = mins[i] if i < len(mins) else None
+        mn = _round(float(mn), 1) if mn is not None else None
+        cat = frost.categorise_low(mn, lang)
+        fr = frost.is_frost(mn)
+        outlook.append({"date": day_iso, "min_temp": mn,
+                        "category": cat["category"], "color": cat["color"], "frost": fr})
+        if next_frost is None and fr:
+            next_frost = {"date": day_iso, "min_temp": mn, "nights_until": len(outlook) - 1}
+
+    return {
+        "site_id": sid,
+        "threshold_c": frost.FROST_THRESHOLD,
+        "tonight": tonight,
+        "next_frost": next_frost,
+        "forecast": outlook[:7],
+        "chill_hours": {"window_days": chill_days, "hours": frost.chill_hours(sid, chill_days),
+                        "range_c": [frost.CHILL_LOW, frost.CHILL_HIGH]},
+        "gdd": {"window_days": gdd_days, "base_c": frost.GDD_BASE,
+                "sum": frost.growing_degree_days(sid, gdd_days)},
     }
 
 

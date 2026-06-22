@@ -83,6 +83,7 @@ DATA_DIR = _get("DATA_DIR", "data")
 ECOWITT_POLL_INTERVAL = _get_int("ECOWITT_POLL_INTERVAL", 300)
 GROWATT_POLL_INTERVAL = _get_int("GROWATT_POLL_INTERVAL", 300)
 OPENMETEO_POLL_INTERVAL = _get_int("OPENMETEO_POLL_INTERVAL", 21600)  # 6h
+NIGHT_SUMMARY_INTERVAL = _get_int("NIGHT_SUMMARY_INTERVAL", 21600)  # 6h
 
 # ── Reports (PDF via e-mail) ──────────────────────────────────────────────
 # SMTP transport credentials are secrets and live only here / in .env. The

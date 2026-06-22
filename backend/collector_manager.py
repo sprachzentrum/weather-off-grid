@@ -13,7 +13,12 @@ import asyncio
 import logging
 
 import settings_store
-from collectors import ecowitt_collector, growatt_collector, openmeteo_collector
+from collectors import (
+    ecowitt_collector,
+    growatt_collector,
+    night_collector,
+    openmeteo_collector,
+)
 
 log = logging.getLogger("manager")
 
@@ -40,6 +45,7 @@ class CollectorManager:
             self._tasks.append(asyncio.create_task(ecowitt_collector.run_poller(site)))
             self._tasks.append(asyncio.create_task(growatt_collector.run_poller(site)))
             self._tasks.append(asyncio.create_task(openmeteo_collector.run_poller(site)))
+            self._tasks.append(asyncio.create_task(night_collector.run_poller(site)))
         log.info("collectors (re)started for %d site(s): %s",
                  len(sites), ", ".join(s["site_id"] for s in sites) or "-")
 

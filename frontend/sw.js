@@ -8,7 +8,7 @@
  *
  * Bump CACHE_VERSION to force clients to drop the old cache on next load.
  */
-const CACHE_VERSION = "wog-v6";
+const CACHE_VERSION = "wog-v7";
 const STATIC_CACHE = CACHE_VERSION + "-static";
 const API_CACHE = CACHE_VERSION + "-api";
 

@@ -207,6 +207,47 @@ def _solar_kwh_by_day(raw: dict, pv_kwp: float, pv_eff: float) -> dict[str, floa
     return {day: (sum(ghi) / 1000.0) * pv_kwp * pv_eff for day, ghi in per_day.items()}
 
 
+def compute_nights(socs: list[tuple[datetime, float]], daily: dict, tz,
+                   capacity: float, now_utc: datetime) -> list[dict]:
+    """Per-night battery consumption from the SOC drop sunset → next sunrise.
+
+    Returns one dict per *completed* night (sunrise in the past), oldest first:
+      {date, kwh, hours, power_w, soc_sunset, soc_sunrise, sunrise_utc}
+    where `date` is the local morning the night ended on. Nights where the SOC
+    rose (overnight generator/grid charging) are skipped - they are not a clean
+    battery-only discharge sample. This is the single source of truth shared by
+    the autonomy endpoint and the night-summary collector.
+    """
+    days_iso = daily.get("time") or []
+    sunrises = daily.get("sunrise") or []
+    sunsets = daily.get("sunset") or []
+    out: list[dict] = []
+    for i in range(len(days_iso) - 1):
+        sunset = _parse_local(sunsets[i], tz) if i < len(sunsets) else None
+        sunrise = _parse_local(sunrises[i + 1], tz) if i + 1 < len(sunrises) else None
+        if sunset is None or sunrise is None or sunrise >= now_utc:
+            continue
+        soc_set = _soc_at(socs, sunset)
+        soc_rise = _soc_at(socs, sunrise)
+        if soc_set is None or soc_rise is None:
+            continue
+        drop_pct = soc_set - soc_rise
+        hours = (sunrise - sunset).total_seconds() / 3600.0
+        if drop_pct <= 0 or hours <= 0:
+            continue  # charged overnight (generator/grid) → not a clean sample
+        kwh = drop_pct / 100.0 * capacity
+        out.append({
+            "date": sunrises[i + 1][:10],
+            "kwh": kwh,
+            "hours": hours,
+            "power_w": kwh * 1000.0 / hours,
+            "soc_sunset": soc_set,
+            "soc_sunrise": soc_rise,
+            "sunrise_utc": sunrise,
+        })
+    return out
+
+
 # ── /api/sites ─────────────────────────────────────────────────────────────
 @router.get("/sites")
 async def list_sites():
@@ -514,28 +555,9 @@ async def energy_autonomy(
     except Exception as exc:  # noqa: BLE001
         log.warning("[%s] forecast fetch for /autonomy failed: %s", sid, exc)
     daily = raw.get("daily") or {}
-    days_iso = daily.get("time") or []
-    sunrises = daily.get("sunrise") or []
-    sunsets = daily.get("sunset") or []
 
     # 1. Night consumption: SOC drop from each sunset to the next sunrise.
-    nights: list[dict] = []
-    for i in range(len(days_iso) - 1):
-        sunset = _parse_local(sunsets[i], tz) if i < len(sunsets) else None
-        sunrise = _parse_local(sunrises[i + 1], tz) if i + 1 < len(sunrises) else None
-        if sunset is None or sunrise is None or sunrise >= now_utc:
-            continue
-        soc_set = _soc_at(socs, sunset)
-        soc_rise = _soc_at(socs, sunrise)
-        if soc_set is None or soc_rise is None:
-            continue
-        drop_pct = soc_set - soc_rise
-        hours = (sunrise - sunset).total_seconds() / 3600.0
-        if drop_pct <= 0 or hours <= 0:
-            continue  # charged overnight (generator/grid) → not a clean sample
-        kwh = drop_pct / 100.0 * capacity
-        nights.append({"kwh": kwh, "hours": hours, "power_w": kwh * 1000.0 / hours})
-    nights = nights[-7:]
+    nights = compute_nights(socs, daily, tz, capacity, now_utc)[-7:]
 
     night_kwh = night_power_w = night_hours = None
     if nights:
@@ -644,6 +666,44 @@ async def energy_autonomy(
         # Backwards-compatible field (PV-aware days expressed in hours).
         "hours_remaining": _round(autonomy_days * 24, 1) if autonomy_days is not None else None,
     }
+
+
+# ── /api/energy/nights ─────────────────────────────────────────────────────
+@router.get("/energy/nights")
+async def energy_nights(site: str | None = Query(None), days: int = Query(30, ge=1, le=365)):
+    """Per-night consumption history persisted by the night-summary collector.
+
+    Returns one entry per stored night (oldest first) so the frontend/report can
+    chart the trend over weeks/months. Unlike /energy/autonomy (which derives a
+    7-night average live), these are the recorded values for each night.
+    """
+    s = _resolve_site(site)
+    tz = _site_tz(s)
+    sr = db.series_raw(
+        config.BUCKET_ENERGY, "night_summary",
+        ["consumption_kwh", "power_w", "hours", "soc_sunset", "soc_sunrise"],
+        site_id=s["site_id"], days=days,
+    )
+    nights = []
+    for i, t in enumerate(sr.get("time", [])):
+        kwh = sr["consumption_kwh"][i]
+        if kwh is None:
+            continue
+        # The point is stamped at sunrise (UTC); the night belongs to that local
+        # morning, so derive the date in the site's timezone (not UTC).
+        dt = _parse_iso(t)
+        local_date = dt.astimezone(tz).date().isoformat() if dt else t[:10]
+        nights.append({
+            "date": local_date,
+            "consumption_kwh": _round(kwh, 2),
+            "power_w": _round(sr["power_w"][i], 0),
+            "hours": _round(sr["hours"][i], 1),
+            "soc_sunset": _round(sr["soc_sunset"][i], 0),
+            "soc_sunrise": _round(sr["soc_sunrise"][i], 0),
+        })
+    avg = (sum(n["consumption_kwh"] for n in nights) / len(nights)) if nights else None
+    return {"site_id": s["site_id"], "nights": nights, "count": len(nights),
+            "avg_consumption_kwh": _round(avg, 2)}
 
 
 # ── /api/fire-danger ───────────────────────────────────────────────────────

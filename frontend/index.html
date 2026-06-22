@@ -253,6 +253,7 @@
       <div class="card chart-card"><h3 data-i18n="ch_press">Luftdruck (hPa)</h3><div class="chart-wrap"><canvas id="chPress"></canvas></div></div>
       <div class="card chart-card" id="cc-soc"><h3 data-i18n="ch_soc">Batterie SOC (%)</h3><div class="chart-wrap"><canvas id="chSoc"></canvas></div></div>
       <div class="card chart-card" id="cc-pv"><h3 data-i18n="ch_pv">PV-Leistung (W)</h3><div class="chart-wrap"><canvas id="chPv"></canvas></div></div>
+      <div class="card chart-card" id="cc-night"><h3 data-i18n="ch_night">Nachtverbrauch (kWh)</h3><div class="chart-wrap"><canvas id="chNight"></canvas></div></div>
     </div>
   </section>
 
@@ -282,7 +283,7 @@ const I18N = {
   de:{loading:"Lade …",sunrise:"Aufgang",sunset:"Untergang",updated:"Stand",battery:"Batterie",energy:"Energie",
     current_weather:"Aktuelles Wetter",forecast_7d:"7-Tage-Vorhersage",next_24h:"Nächste 24 Stunden",
     charts:"Verlauf & Prognose",ch_temp:"Temperatur (°C)",ch_wind:"Wind & Böen (km/h)",ch_rain:"Niederschlag (mm)",
-    ch_press:"Luftdruck (hPa)",ch_soc:"Batterie SOC (%)",ch_pv:"PV-Leistung (W)",offgrid:"Off-Grid",
+    ch_press:"Luftdruck (hPa)",ch_soc:"Batterie SOC (%)",ch_pv:"PV-Leistung (W)",ch_night:"Nachtverbrauch (kWh)",offgrid:"Off-Grid",
     microclimate:"Mikroklima-Lernfortschritt",data_src:"Daten",charge:"Laden",discharge:"Entladen",idle:"Ruhe",
     pv:"PV",load:"Last",voltage:"Spannung",soc:"Ladestand",today_pv:"PV heute",today_load:"Verbrauch heute",
     feels:"gefühlt",humidity:"Luftfeuchte",dewpoint:"Taupunkt",wind:"Wind",gust:"Böen",pressure:"Luftdruck",
@@ -303,7 +304,7 @@ const I18N = {
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
     charts:"History & forecast",ch_temp:"Temperature (°C)",ch_wind:"Wind & gusts (km/h)",ch_rain:"Precipitation (mm)",
-    ch_press:"Pressure (hPa)",ch_soc:"Battery SOC (%)",ch_pv:"PV power (W)",offgrid:"Off-grid",
+    ch_press:"Pressure (hPa)",ch_soc:"Battery SOC (%)",ch_pv:"PV power (W)",ch_night:"Night consumption (kWh)",offgrid:"Off-grid",
     microclimate:"Microclimate learning",data_src:"Data",charge:"Charging",discharge:"Discharging",idle:"Idle",
     pv:"PV",load:"Load",voltage:"Voltage",soc:"State of charge",today_pv:"PV today",today_load:"Load today",
     feels:"feels like",humidity:"Humidity",dewpoint:"Dew point",wind:"Wind",gust:"Gusts",pressure:"Pressure",
@@ -324,7 +325,7 @@ const I18N = {
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
     charts:"Historial y pronóstico",ch_temp:"Temperatura (°C)",ch_wind:"Viento y ráfagas (km/h)",ch_rain:"Precipitación (mm)",
-    ch_press:"Presión (hPa)",ch_soc:"SOC batería (%)",ch_pv:"Potencia FV (W)",offgrid:"Off-grid",
+    ch_press:"Presión (hPa)",ch_soc:"SOC batería (%)",ch_pv:"Potencia FV (W)",ch_night:"Consumo nocturno (kWh)",offgrid:"Off-grid",
     microclimate:"Aprendizaje microclima",data_src:"Datos",charge:"Cargando",discharge:"Descargando",idle:"Reposo",
     pv:"FV",load:"Carga",voltage:"Tensión",soc:"Estado de carga",today_pv:"FV hoy",today_load:"Consumo hoy",
     feels:"sensación",humidity:"Humedad",dewpoint:"Punto rocío",wind:"Viento",gust:"Ráfagas",pressure:"Presión",
@@ -494,15 +495,19 @@ const WMO_DESC = {
   2:{de:"Teils bewölkt",en:"Partly cloudy",es:"Parc. nublado"},3:{de:"Bedeckt",en:"Overcast",es:"Nublado"},
   45:{de:"Nebel",en:"Fog",es:"Niebla"},48:{de:"Reifnebel",en:"Rime fog",es:"Niebla escarcha"},
   51:{de:"Niesel",en:"Drizzle",es:"Llovizna"},53:{de:"Niesel",en:"Drizzle",es:"Llovizna"},55:{de:"Starker Niesel",en:"Dense drizzle",es:"Llovizna densa"},
+  56:{de:"Gefr. Niesel",en:"Freezing drizzle",es:"Llovizna helada"},57:{de:"Starker gefr. Niesel",en:"Dense freezing drizzle",es:"Llovizna helada densa"},
   61:{de:"Regen",en:"Rain",es:"Lluvia"},63:{de:"Regen",en:"Rain",es:"Lluvia"},65:{de:"Starker Regen",en:"Heavy rain",es:"Lluvia fuerte"},
+  66:{de:"Gefr. Regen",en:"Freezing rain",es:"Lluvia helada"},67:{de:"Starker gefr. Regen",en:"Heavy freezing rain",es:"Lluvia helada fuerte"},
   71:{de:"Schnee",en:"Snow",es:"Nieve"},73:{de:"Schnee",en:"Snow",es:"Nieve"},75:{de:"Starker Schnee",en:"Heavy snow",es:"Nieve fuerte"},
+  77:{de:"Schneegriesel",en:"Snow grains",es:"Granos de nieve"},
   80:{de:"Schauer",en:"Showers",es:"Chubascos"},81:{de:"Schauer",en:"Showers",es:"Chubascos"},82:{de:"Heftige Schauer",en:"Violent showers",es:"Chubascos fuertes"},
+  85:{de:"Schneeschauer",en:"Snow showers",es:"Chubascos de nieve"},86:{de:"Starke Schneeschauer",en:"Heavy snow showers",es:"Chubascos de nieve fuertes"},
   95:{de:"Gewitter",en:"Thunderstorm",es:"Tormenta"},96:{de:"Gewitter, Hagel",en:"Thunderstorm, hail",es:"Tormenta, granizo"},99:{de:"Schweres Gewitter",en:"Severe storm",es:"Tormenta severa"}
 };
 function wmo(code, isDay=true){
   const map={0:isDay?"☀️":"🌙",1:isDay?"🌤️":"🌙",2:"⛅",3:"☁️",45:"🌫️",48:"🌫️",
-    51:"🌦️",53:"🌦️",55:"🌧️",61:"🌦️",63:"🌧️",65:"🌧️",71:"🌨️",73:"🌨️",75:"❄️",
-    80:"🌦️",81:"🌧️",82:"⛈️",95:"⛈️",96:"⛈️",99:"⛈️"};
+    51:"🌦️",53:"🌦️",55:"🌧️",56:"🌧️",57:"🌧️",61:"🌦️",63:"🌧️",65:"🌧️",66:"🌧️",67:"🌧️",
+    71:"🌨️",73:"🌨️",75:"❄️",77:"🌨️",80:"🌦️",81:"🌧️",82:"⛈️",85:"🌨️",86:"❄️",95:"⛈️",96:"⛈️",99:"⛈️"};
   const d = WMO_DESC[code] || {de:"—",en:"—",es:"—"};
   return {ico: map[code]||"❓", desc: d[LANG]||d.de};
 }
@@ -762,7 +767,7 @@ const C_OPTS={responsive:true,maintainAspectRatio:false,interaction:{mode:"index
 function chart(id,cfg){ if(charts[id])charts[id].destroy(); charts[id]=new Chart($(id),cfg); }
 const tlabel = iso => { const d=new Date(iso); return `${d.getDate()}.${d.getMonth()+1}. ${String(d.getHours()).padStart(2,"0")}h`; };
 
-function renderCharts(hist, bat){
+function renderCharts(hist, bat, nights){
   const A="#00d4aa",B="#4895ef",W="#f4a261";
   const hl=(hist.time||[]).map(tlabel);
   chart("chTemp",{type:"line",data:{labels:hl,datasets:[
@@ -784,6 +789,16 @@ function renderCharts(hist, bat){
     $("cc-soc").classList.remove("hidden"); $("cc-pv").classList.remove("hidden");
   } else {
     $("cc-soc").classList.add("hidden"); $("cc-pv").classList.add("hidden");
+  }
+
+  const nl = (nights && nights.nights) || [];
+  if(nl.length){
+    const labels = nl.map(n=>{ const d=new Date(n.date+"T12:00"); return `${d.getDate()}.${d.getMonth()+1}.`; });
+    chart("chNight",{type:"bar",data:{labels,datasets:[
+      {label:"kWh",data:nl.map(n=>n.consumption_kwh),backgroundColor:W,borderRadius:3}]},options:C_OPTS});
+    $("cc-night").classList.remove("hidden");
+  } else {
+    $("cc-night").classList.add("hidden");
   }
 }
 
@@ -807,6 +822,7 @@ async function refresh(){
     solar: api(siteParam(`/forecast/solar?pv_kwp=${pv}&pv_eff=${eff}`)),
     history: api(siteParam("/history?days=7")),
     battery: api(siteParam("/battery?days=7")),
+    nights: api(siteParam("/energy/nights?days=30")),
     energyToday: api(siteParam("/energy/today")),
     autonomy: api(siteParam(`/energy/autonomy?capacity_kwh=${cap}&pv_kwp=${pv}&pv_eff=${eff}`)),
     microclimate: api(siteParam("/microclimate")),
@@ -829,7 +845,7 @@ async function refresh(){
   if(results.fireDanger) renderFireDanger(results.fireDanger);
   if(results.forecast){ window._forecastDays=results.forecast.days; renderDaily(results.forecast); }
   if(results.hourly) renderHourly(results.hourly);
-  if(results.history) renderCharts(results.history, results.battery);
+  if(results.history) renderCharts(results.history, results.battery, results.nights);
   if(CFG.SHOW_OFFGRID!==false && results.solar) renderOffgrid(results.solar, results.energyToday, results.autonomy);
   if(CFG.SHOW_MICROCLIMATE!==false && results.microclimate!==null) renderMicroclimate(results.microclimate);
 

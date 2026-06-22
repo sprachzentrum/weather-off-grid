@@ -196,6 +196,40 @@ def series(
     return result
 
 
+def series_raw(
+    bucket: str,
+    measurement: str,
+    fields: list[str],
+    site_id: str | None = None,
+    days: int = 30,
+) -> dict[str, list]:
+    """
+    Unaggregated time series: every stored point with its original timestamp,
+    pivoted to {"time": [...], field: [...], ...}. Use this for sparse event
+    data (e.g. one point per night) where aggregateWindow would both average
+    same-window points and snap timestamps to window boundaries.
+    """
+    field_filter = " or ".join(f'r._field == "{f}"' for f in fields)
+    flux = f'''
+    from(bucket: "{bucket}")
+      |> range(start: -{days}d)
+      |> filter(fn: (r) => r._measurement == "{measurement}"){_site_filter(site_id)}
+      |> filter(fn: (r) => {field_filter})
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> sort(columns: ["_time"])
+    '''
+    result: dict[str, list] = {"time": []}
+    for f in fields:
+        result[f] = []
+    for table in query(flux):
+        for record in table.records:
+            result["time"].append(record.get_time().isoformat())
+            values = record.values
+            for f in fields:
+                result[f].append(values.get(f))
+    return result
+
+
 def count_points(bucket: str, site_id: str | None = None, days: int = 365) -> int:
     """Approximate number of stored points in a bucket (optionally per site)."""
     flux = f'''

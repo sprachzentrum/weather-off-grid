@@ -165,3 +165,66 @@ def growing_degree_days(site_id: str | None, days: int = 30,
         mean = (tmax[day] + tmin[day]) / 2.0
         total += max(0.0, mean - base)
     return round(total, 1)
+
+
+# Southern-hemisphere season halves used to pin down the frost season: a late
+# (spring) frost ends the cold season, an early (autumn) frost starts it. These
+# are flipped for the northern hemisphere.
+_SPRING_MONTHS_S = {8, 9, 10, 11}
+_AUTUMN_MONTHS_S = {3, 4, 5, 6}
+
+
+def season_stats(site_id: str | None, days: int = 400,
+                 hemisphere: str = "south") -> dict | None:
+    """
+    Climatology from the station's own history, to sanity-check when the garden
+    season really starts here. Returns, per calendar month, the mean daily
+    min/max and the number of observed frost nights (min ≤ 0 °C), plus the
+    latest spring frost and earliest autumn frost actually recorded. None if
+    there is no usable history yet.
+    """
+    tmin = _daily_extreme(site_id, days, "min")
+    tmax = _daily_extreme(site_id, days, "max")
+    if not tmin:
+        return None
+
+    from collections import defaultdict
+    sum_min: dict[int, float] = defaultdict(float)
+    cnt_min: dict[int, int] = defaultdict(int)
+    sum_max: dict[int, float] = defaultdict(float)
+    cnt_max: dict[int, int] = defaultdict(int)
+    frost_by_month: dict[int, int] = defaultdict(int)
+    frost_dates: list[str] = []
+
+    for day, v in tmin.items():
+        m = int(day[5:7])
+        sum_min[m] += v
+        cnt_min[m] += 1
+        if v <= FROST_THRESHOLD:
+            frost_by_month[m] += 1
+            frost_dates.append(day)
+    for day, v in tmax.items():
+        m = int(day[5:7])
+        sum_max[m] += v
+        cnt_max[m] += 1
+
+    months = [{
+        "month": m,
+        "mean_min": round(sum_min[m] / cnt_min[m], 1) if cnt_min[m] else None,
+        "mean_max": round(sum_max[m] / cnt_max[m], 1) if cnt_max[m] else None,
+        "frost_days": frost_by_month[m],
+        "observed_days": cnt_min[m],
+    } for m in range(1, 13)]
+
+    spring = _SPRING_MONTHS_S if hemisphere == "south" else {2, 3, 4, 5}
+    autumn = _AUTUMN_MONTHS_S if hemisphere == "south" else {9, 10, 11, 12}
+    spring_frosts = [d for d in frost_dates if int(d[5:7]) in spring]
+    autumn_frosts = [d for d in frost_dates if int(d[5:7]) in autumn]
+
+    return {
+        "window_days": days,
+        "months": months,
+        "frost_day_total": len(frost_dates),
+        "last_spring_frost": max(spring_frosts) if spring_frosts else None,
+        "first_autumn_frost": min(autumn_frosts) if autumn_frosts else None,
+    }

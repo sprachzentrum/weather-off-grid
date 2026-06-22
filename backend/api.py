@@ -943,6 +943,22 @@ async def planting_endpoint(site: str | None = Query(None)):
     }
 
 
+# ── /api/season ────────────────────────────────────────────────────────────
+@router.get("/season")
+async def season_endpoint(site: str | None = Query(None),
+                          days: int = Query(400, ge=60, le=1825)):
+    """
+    Garden-season climatology from the station's own history: per-month mean
+    min/max temperature and frost-night counts, plus the latest spring frost and
+    earliest autumn frost recorded. Use it to check whether the season really
+    starts earlier here than the textbook calendar suggests.
+    """
+    s = _resolve_site(site)
+    hemisphere = planting.hemisphere_for(s.get("latitude"))
+    stats = frost.season_stats(s["site_id"], days=days, hemisphere=hemisphere)
+    return {"site_id": s["site_id"], "hemisphere": hemisphere, "stats": stats}
+
+
 # ── /api/reports/latest ────────────────────────────────────────────────────
 @router.get("/reports/latest")
 async def reports_latest(

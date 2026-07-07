@@ -343,7 +343,7 @@ const I18N = {
     offline:"Offline – Daten von",auto_refresh:"Auto-Refresh alle {n} Min",no_battery:"Keine Energiedaten (Growatt nicht konfiguriert)",battery_no_data:"Keine aktuellen Energiedaten – Growatt-Sync prüfen",
     local_forecast:"Lokale Prognose",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Lokal",lf_regional:"Open-Meteo",lf_rain:"Regen",lf_norain:"kein Regen",
-    lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar",
+    lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar",lf_age:"Messung vor {n} Min",
     fire_danger:"Feuerrisiko",fire_ffdi:"FFDI",fire_days_norain:"Tage ohne Regen",
     fire_warning:"Feuerrisiko {label} — höchste Vorsicht",fire_nodata:"Keine Sensordaten für den Feuerindex",
     frost_title:"Frost & Obstbau",frost_pill:"FROST",frost_nodata:"Keine Frostdaten verfügbar",
@@ -377,7 +377,7 @@ const I18N = {
     offline:"Offline – data from",auto_refresh:"Auto-refresh every {n} min",no_battery:"No energy data (Growatt not configured)",battery_no_data:"No recent energy data – check Growatt sync",
     local_forecast:"Local outlook",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"rain",lf_norain:"no rain",
-    lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available",
+    lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available",lf_age:"reading {n} min ago",
     fire_danger:"Fire danger",fire_ffdi:"FFDI",fire_days_norain:"days without rain",
     fire_warning:"Fire danger {label} — extreme caution",fire_nodata:"No sensor data for the fire index",
     frost_title:"Frost & orchard",frost_pill:"FROST",frost_nodata:"No frost data available",
@@ -411,7 +411,7 @@ const I18N = {
     offline:"Sin conexión – datos de",auto_refresh:"Auto-actualizar cada {n} min",no_battery:"Sin datos de energía (Growatt no configurado)",battery_no_data:"Sin datos de energía recientes – revisar sincronización Growatt",
     local_forecast:"Pronóstico local",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"lluvia",lf_norain:"sin lluvia",
-    lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión",
+    lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión",lf_age:"medición hace {n} min",
     fire_danger:"Riesgo de incendio",fire_ffdi:"FFDI",fire_days_norain:"días sin lluvia",
     fire_warning:"Riesgo de incendio {label} — máxima precaución",fire_nodata:"Sin datos del sensor para el índice",
     frost_title:"Heladas y huerta",frost_pill:"HELADA",frost_nodata:"Sin datos de heladas",
@@ -684,6 +684,11 @@ function baroTrendText(lf){
   return `<span class="${cls}">${lf.arrow} ${sign}${fmt(lf.trend_3h)}</span> hPa/3h`;
 }
 
+function lfAgeText(lf){
+  if(!lf || lf.data_age_min==null || lf.data_age_min<15) return "";
+  return ` · 🕒 ${t("lf_age",{n:lf.data_age_min})}`;
+}
+
 function renderLocalForecast(lf){
   const el = $("localforecast");
   const z = lf && lf.zambretti;
@@ -707,7 +712,7 @@ function renderLocalForecast(lf){
         <div class="lf-icon">${icon}</div>
         <div>
           <div class="lf-text">${text}</div>
-          <div class="lf-sub"><b>${fmt0(lf.pressure)}</b> hPa · ${baroTrendText(lf)}</div>
+          <div class="lf-sub"><b>${fmt0(lf.pressure)}</b> hPa · ${baroTrendText(lf)}${lfAgeText(lf)}</div>
           ${cmp}
         </div>
       </div>

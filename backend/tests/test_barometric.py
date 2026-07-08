@@ -145,3 +145,50 @@ def test_zambretti_unknown_trend_falls_back_to_steady():
     a = barometric.zambretti(1005.0, "steady", None, 1, southern=False)
     b = barometric.zambretti(1005.0, "bogus", None, 1, southern=False)
     assert a["index"] == b["index"]
+
+
+# ── calibration_offset ──────────────────────────────────────────────────────
+
+def _cal_data(offset, om_naive_local=True, utc_off=-3 * 3600):
+    """Station series (UTC, 30-min) and OM hourly (naive local) with a fixed offset."""
+    base = datetime(2026, 7, 7, 0, 0, tzinfo=timezone.utc)
+    st_times, st_vals = [], []
+    for i in range(48):
+        st_times.append((base + timedelta(minutes=30 * i)).isoformat())
+        st_vals.append(1010.0 + (i % 5) * 0.2 + offset)
+    om_times, om_vals = [], []
+    for i in range(24):
+        t = base + timedelta(hours=i)
+        if om_naive_local:
+            local = t + timedelta(seconds=utc_off)
+            om_times.append(local.replace(tzinfo=None).isoformat())
+        else:
+            om_times.append(t.isoformat())
+        om_vals.append(1010.0 + ((2 * i) % 5) * 0.2)
+    return st_times, st_vals, om_times, om_vals
+
+
+def test_calibration_offset_detects_bias():
+    st_t, st_v, om_t, om_v = _cal_data(offset=5.0)
+    off = barometric.calibration_offset(st_t, st_v, om_t, om_v, om_utc_offset_s=-3 * 3600)
+    assert off == 5.0
+
+
+def test_calibration_offset_zero_when_calibrated():
+    st_t, st_v, om_t, om_v = _cal_data(offset=0.0)
+    off = barometric.calibration_offset(st_t, st_v, om_t, om_v, om_utc_offset_s=-3 * 3600)
+    assert off == 0.0
+
+
+def test_calibration_offset_needs_enough_pairs():
+    st_t, st_v, om_t, om_v = _cal_data(offset=5.0)
+    off = barometric.calibration_offset(st_t, st_v, om_t[:3], om_v[:3], om_utc_offset_s=-3 * 3600)
+    assert off is None
+    assert barometric.calibration_offset([], [], om_t, om_v) is None
+
+
+def test_calibration_offset_ignores_far_om_points():
+    # OM points 3 days earlier fall outside the 24-h window: not enough pairs.
+    st_t, st_v, om_t, om_v = _cal_data(offset=5.0)
+    old = [(datetime.fromisoformat(t) - timedelta(days=3)).isoformat() for t in om_t]
+    assert barometric.calibration_offset(st_t, st_v, old, om_v, om_utc_offset_s=-3 * 3600) is None

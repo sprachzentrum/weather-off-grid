@@ -94,6 +94,8 @@
   .lf-compare{margin-top:10px;font-size:.8rem;padding:7px 11px;border-radius:8px;background:var(--card-2);
     display:flex;gap:10px;flex-wrap:wrap}
   .lf-compare .tag{font-weight:600}
+  .lf-calib{margin-top:8px;font-size:.8rem;padding:7px 11px;border-radius:8px;
+    background:var(--card-2);border-left:3px solid var(--warn)}
   #localforecast.sev-good{border-left:4px solid var(--good)}
   #localforecast.sev-changeable{border-left:4px solid var(--warn)}
   #localforecast.sev-deteriorating{border-left:4px solid var(--bad)}
@@ -344,6 +346,7 @@ const I18N = {
     local_forecast:"Lokale Prognose",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Lokal",lf_regional:"Open-Meteo",lf_rain:"Regen",lf_norain:"kein Regen",
     lf_agree:"Lokal & Open-Meteo einig",lf_nopressure:"Keine Druckdaten verfügbar",lf_age:"Messung vor {n} Min",
+    lf_calib:"Barometer prüfen: Ø {n} hPa Abweichung zu Open-Meteo – rel. Luftdruck in der Ecowitt-App kalibrieren",
     fire_danger:"Feuerrisiko",fire_ffdi:"FFDI",fire_days_norain:"Tage ohne Regen",
     fire_warning:"Feuerrisiko {label} — höchste Vorsicht",fire_nodata:"Keine Sensordaten für den Feuerindex",
     frost_title:"Frost & Obstbau",frost_pill:"FROST",frost_nodata:"Keine Frostdaten verfügbar",
@@ -378,6 +381,7 @@ const I18N = {
     local_forecast:"Local outlook",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"rain",lf_norain:"no rain",
     lf_agree:"Local & Open-Meteo agree",lf_nopressure:"No pressure data available",lf_age:"reading {n} min ago",
+    lf_calib:"Check barometer: avg {n} hPa off Open-Meteo – calibrate relative pressure in the Ecowitt app",
     fire_danger:"Fire danger",fire_ffdi:"FFDI",fire_days_norain:"days without rain",
     fire_warning:"Fire danger {label} — extreme caution",fire_nodata:"No sensor data for the fire index",
     frost_title:"Frost & orchard",frost_pill:"FROST",frost_nodata:"No frost data available",
@@ -412,6 +416,7 @@ const I18N = {
     local_forecast:"Pronóstico local",zambretti_pill:"6–12 h · Zambretti",lf_vs:"vs. Open-Meteo",
     lf_local:"Local",lf_regional:"Open-Meteo",lf_rain:"lluvia",lf_norain:"sin lluvia",
     lf_agree:"Local y Open-Meteo coinciden",lf_nopressure:"Sin datos de presión",lf_age:"medición hace {n} min",
+    lf_calib:"Revisar barómetro: Ø {n} hPa de desvío vs Open-Meteo – calibrar presión relativa en la app Ecowitt",
     fire_danger:"Riesgo de incendio",fire_ffdi:"FFDI",fire_days_norain:"días sin lluvia",
     fire_warning:"Riesgo de incendio {label} — máxima precaución",fire_nodata:"Sin datos del sensor para el índice",
     frost_title:"Heladas y huerta",frost_pill:"HELADA",frost_nodata:"Sin datos de heladas",
@@ -705,6 +710,11 @@ function renderLocalForecast(lf){
       <span><span class="tag">${t("lf_regional")}:</span> ${fmt0(c.openmeteo_rain_prob)}% ${t("lf_rain")}</span></div>`;
   } else if(c && c.agree===true){
     cmp = `<div class="lf-compare">✓ ${t("lf_agree")}</div>`;
+  }
+  const cal = lf.calibration;
+  if(cal && cal.status==="check"){
+    const off = (cal.offset_hpa>0?"+":"")+fmt(cal.offset_hpa);
+    cmp += `<div class="lf-calib">⚠️ ${t("lf_calib",{n:off})}</div>`;
   }
   el.innerHTML = `
     <div class="lf-wrap">

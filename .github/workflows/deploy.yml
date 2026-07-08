@@ -1,0 +1,50 @@
+# Auto-deploy: on every push to main, SSH into the server, pull and rebuild.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST     server IP or hostname
+#   DEPLOY_USER     SSH user
+#   DEPLOY_SSH_KEY  private key (ed25519) whose public half is in the server's
+#                   ~/.ssh/authorized_keys
+# Optional:
+#   DEPLOY_PORT     SSH port (default 22)
+#   DEPLOY_PATH     repo checkout on the server (default: weather-off-grid,
+#                   relative to the SSH user's home)
+#
+# Until the secrets are configured the job exits early with a notice instead
+# of failing the build.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          APP_DIR: ${{ secrets.DEPLOY_PATH || 'weather-off-grid' }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "::notice::DEPLOY_HOST / DEPLOY_SSH_KEY secrets not set – skipping deploy."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -p "$PORT" \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=15 \
+              "$SSH_USER@$HOST" \
+              "set -e; cd '$APP_DIR'; git pull origin main; docker compose up -d --build backend; docker compose ps"

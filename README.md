@@ -117,6 +117,33 @@ docker compose exec backend python import_historical.py --ecowitt import/ecowitt
 docker compose exec backend python import_historical.py --openmeteo --years 3
 ```
 
+## Auto-Deploy (GitHub Actions)
+
+Jeder Push auf `main` kann automatisch auf den Server ausgerollt werden
+(`.github/workflows/deploy.yml`: per SSH `git pull` + `docker compose up -d
+--build backend`). Einrichtung:
+
+```bash
+# 1. Deploy-Key erzeugen (lokal oder auf dem Server)
+ssh-keygen -t ed25519 -f deploy_key -C weather-deploy -N ""
+# 2. Public Key auf dem Server autorisieren
+cat deploy_key.pub >> ~/.ssh/authorized_keys
+```
+
+Dann im Repo unter **Settings → Secrets and variables → Actions** anlegen:
+
+| Secret | Wert |
+|--------|------|
+| `DEPLOY_HOST` | IP oder Hostname des Servers |
+| `DEPLOY_USER` | SSH-Benutzer |
+| `DEPLOY_SSH_KEY` | Inhalt der privaten Key-Datei `deploy_key` |
+| `DEPLOY_PORT` | optional, SSH-Port (Default 22) |
+| `DEPLOY_PATH` | optional, Repo-Pfad auf dem Server (Default `weather-off-grid` im Home) |
+
+Solange die Secrets fehlen, überspringt der Workflow das Deployment mit einem
+Hinweis statt fehlzuschlagen. Manuell auslösen geht über den Tab **Actions →
+Deploy → Run workflow**.
+
 ## Einstellungen & Multi-Standort
 
 Ab Version 1.1 muss die `.env` nicht mehr von Hand editiert werden: Über die

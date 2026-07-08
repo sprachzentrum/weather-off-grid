@@ -997,19 +997,32 @@ async def local_forecast(site: str | None = Query(None)):
     latest = db.latest_fields(config.BUCKET_WEATHER, "station", site_id=sid)
     pressure = latest.get("pressure_relative")
     wind_dir = latest.get("wind_direction")
+    wind_speed = latest.get("wind_speed")
 
-    lt = latest.get("_time")
-    month = lt.month if hasattr(lt, "month") else datetime.utcnow().month
+    now = datetime.now(timezone.utc)
+    measured_at = latest.get("_time")
+    month = measured_at.month if hasattr(measured_at, "month") else now.month
+    data_age_min = None
+    if hasattr(measured_at, "timestamp"):
+        data_age_min = max(0, round((now - measured_at).total_seconds() / 60))
 
-    # 30-min pressure series over the last 24 h: drives both the trend and the graph.
+    # 30-min pressure series over the last 24 h: drives both the trend and the
+    # graph. The freshest live reading anchors the trend so it ends at "now"
+    # instead of at the (lagging, partial) last window mean.
     series = db.series(
         config.BUCKET_WEATHER, "station", ["pressure_relative"],
         site_id=sid, days=1, every="30m",
     )
-    delta = barometric.trend_3h(series.get("time"), series.get("pressure_relative"))
+    delta = barometric.trend_3h(
+        series.get("time"), series.get("pressure_relative"),
+        anchor_time=measured_at if hasattr(measured_at, "timestamp") else None,
+        anchor_value=pressure,
+    )
     trend, arrow = barometric.classify_trend(delta)
     southern = (s.get("latitude") or 0) < 0
-    zam = barometric.zambretti(pressure, trend, wind_dir, month, southern=southern)
+    zam = barometric.zambretti(
+        pressure, trend, wind_dir, month, southern=southern, wind_speed=wind_speed
+    )
 
     # Best-effort comparison with the regional model (rain yes/no today).
     comparison = None
@@ -1036,6 +1049,9 @@ async def local_forecast(site: str | None = Query(None)):
         "site_id": sid,
         "pressure": _round(pressure),
         "wind_dir": wind_dir,
+        "wind_speed": _round(wind_speed),
+        "measured_at": measured_at.isoformat() if hasattr(measured_at, "isoformat") else None,
+        "data_age_min": data_age_min,
         "trend_3h": delta,
         "trend": trend,
         "arrow": arrow,

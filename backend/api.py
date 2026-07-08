@@ -1024,8 +1024,10 @@ async def local_forecast(site: str | None = Query(None)):
         pressure, trend, wind_dir, month, southern=southern, wind_speed=wind_speed
     )
 
-    # Best-effort comparison with the regional model (rain yes/no today).
+    # Best-effort comparison with the regional model (rain yes/no today) plus a
+    # barometer calibration check against Open-Meteo's sea-level pressure.
     comparison = None
+    calibration = None
     if zam is not None:
         try:
             raw = await _forecast_raw(s)
@@ -1042,6 +1044,17 @@ async def local_forecast(site: str | None = Query(None)):
                         "zambretti_rain": zam["rain_likely"],
                         "agree": zam["rain_likely"] == (om_prob >= 50),
                     }
+            hourly = raw.get("hourly") or {}
+            offset = barometric.calibration_offset(
+                series.get("time"), series.get("pressure_relative"),
+                hourly.get("time"), hourly.get("pressure_msl"),
+                om_utc_offset_s=raw.get("utc_offset_seconds") or 0,
+            )
+            if offset is not None:
+                calibration = {
+                    "offset_hpa": offset,
+                    "status": "ok" if abs(offset) <= barometric.CALIBRATION_WARN_HPA else "check",
+                }
         except Exception as exc:  # noqa: BLE001
             log.warning("[%s] local-forecast OM compare failed: %s", sid, exc)
 
@@ -1059,4 +1072,5 @@ async def local_forecast(site: str | None = Query(None)):
         "zambretti": zam,
         "pressure_series": series,
         "comparison": comparison,
+        "calibration": calibration,
     }

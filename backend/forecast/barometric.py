@@ -18,7 +18,7 @@ fallback for non-localising consumers (e.g. the iOS widget).
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Pressure window the Zambretti mapping is calibrated for.
 Z_BOTTOM = 950.0
@@ -35,6 +35,8 @@ CALM_WIND_KMH = 2.0
 SEASON_OFFSET_HPA = 7.0 / 100.0 * Z_RANGE
 # Forecast index at/above which meaningful rain is implied (for the OM compare).
 RAIN_INDEX = 13
+# Mean |station - Open-Meteo MSL| above this suggests a miscalibrated barometer.
+CALIBRATION_WARN_HPA = 3.0
 
 # Beteljuice option tables: map the pressure step (0=low .. 21=high) to a
 # forecast index 0..25. Value 0 = best ("Settled fine"), 25 = worst ("Stormy").
@@ -127,6 +129,59 @@ def trend_3h(
         return None
     ref_t, ref_v = min(older, key=lambda p: abs(p[0].timestamp() - target))
     return round(last_v - ref_v, 1)
+
+
+def calibration_offset(
+    station_times: list[str],
+    station_values: list,
+    om_times: list[str],
+    om_values: list,
+    om_utc_offset_s: int = 0,
+    hours: int = 24,
+    min_pairs: int = 6,
+) -> float | None:
+    """
+    Mean (station - Open-Meteo sea-level) pressure difference in hPa over the
+    last `hours`, pairing each Open-Meteo hourly value with the station reading
+    closest in time (max 45 min apart). A persistent offset means the station's
+    relative-pressure calibration is off (the 3-h trend is unaffected, but the
+    absolute position on the Zambretti dial shifts).
+
+    Open-Meteo hourly times are local and naive; om_utc_offset_s (the API's
+    utc_offset_seconds) anchors them. Returns None with fewer than `min_pairs`
+    matched pairs.
+    """
+    st = [
+        (datetime.fromisoformat(t.replace("Z", "+00:00")), v)
+        for t, v in zip(station_times or [], station_values or [])
+        if v is not None and t
+    ]
+    if not st:
+        return None
+    st.sort(key=lambda p: p[0])
+    newest = st[-1][0].timestamp()
+    window_start = newest - hours * 3600
+
+    om_tz = timezone(timedelta(seconds=om_utc_offset_s))
+    diffs = []
+    for t, v in zip(om_times or [], om_values or []):
+        if v is None or not t:
+            continue
+        try:
+            ot = datetime.fromisoformat(t)
+        except ValueError:
+            continue
+        if ot.tzinfo is None:
+            ot = ot.replace(tzinfo=om_tz)
+        ots = ot.timestamp()
+        if not window_start <= ots <= newest:
+            continue
+        nearest_t, nearest_v = min(st, key=lambda p: abs(p[0].timestamp() - ots))
+        if abs(nearest_t.timestamp() - ots) <= 45 * 60:
+            diffs.append(nearest_v - v)
+    if len(diffs) < min_pairs:
+        return None
+    return round(sum(diffs) / len(diffs), 1)
 
 
 def _severity(index: int) -> tuple[str, str]:

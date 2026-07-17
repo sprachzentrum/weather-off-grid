@@ -8,8 +8,18 @@
 <link rel="manifest" href="manifest.json">
 <style>
   :root{--bg:#0f0f1a;--card:#1a1a2e;--card-2:#222241;--line:#2c2c4a;--txt:#e8e8f5;--dim:#9a9ac4;
-    --accent:#00d4aa;--good:#00d4aa;--warn:#f4a261;--bad:#e63946;--radius:14px;}
+    --accent:#00d4aa;--good:#00d4aa;--warn:#f4a261;--bad:#e63946;--radius:14px;color-scheme:dark;}
+  :root[data-theme="light"]{--bg:#f2f3f9;--card:#ffffff;--card-2:#e9ebf4;--line:#d7dae6;--txt:#1a1a2e;
+    --dim:#5a5a78;--accent:#00967a;--good:#00967a;--warn:#b45309;--bad:#c1121f;--btn-txt:#fff;color-scheme:light;}
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme]){--bg:#f2f3f9;--card:#ffffff;--card-2:#e9ebf4;--line:#d7dae6;--txt:#1a1a2e;
+      --dim:#5a5a78;--accent:#00967a;--good:#00967a;--warn:#b45309;--bad:#c1121f;--btn-txt:#fff;color-scheme:light;}
+  }
   *{box-sizing:border-box;margin:0;padding:0}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{transition:none!important;animation:none!important}
+  }
   body{background:var(--bg);color:var(--txt);line-height:1.45;padding:16px;max-width:980px;margin:0 auto;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     padding-bottom:max(16px,env(safe-area-inset-bottom))}
@@ -28,8 +38,8 @@
   .row-check{display:flex;align-items:center;gap:8px;margin-bottom:12px}
   .row-check input{width:auto}
   .row-check label{margin:0;text-transform:none;letter-spacing:0;font-size:.92rem;color:var(--txt)}
-  button{background:var(--accent);color:#06281f;border:none;border-radius:10px;padding:10px 16px;
-    font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit}
+  button{background:var(--accent);color:var(--btn-txt,#06281f);border:none;border-radius:10px;padding:10px 16px;
+    font-size:.92rem;font-weight:700;cursor:pointer;font-family:inherit;min-height:44px}
   button.ghost{background:var(--card-2);color:var(--txt);border:1px solid var(--line)}
   button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
   button:disabled{opacity:.5;cursor:wait}
@@ -55,8 +65,19 @@
   .steps{display:flex;gap:6px;margin-bottom:16px}
   .step-dot{flex:1;height:6px;border-radius:3px;background:var(--card-2)}
   .step-dot.done{background:var(--accent)}
-  .sysrow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:.88rem}
+  .sysrow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:.88rem;gap:10px;flex-wrap:wrap}
   .sysrow:last-child{border-bottom:none}
+  .syserr{color:var(--bad);font-size:.78rem}
+  /* Per-service status chip: not configured / untested / ok / failed */
+  .chip{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
+    padding:3px 9px;border-radius:999px;background:var(--card-2);color:var(--dim);margin-left:auto}
+  .chip.ok{background:rgba(0,212,170,.16);color:var(--good)}
+  .chip.err{background:rgba(230,57,70,.14);color:var(--bad)}
+  .chip.todo{background:rgba(244,162,97,.14);color:var(--warn)}
+  /* Wizard summary */
+  .sumrow{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+  .sumrow:last-child{border-bottom:none}
+  .sumrow .k{color:var(--dim)}
   .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
   .dot.ok{background:var(--good)}.dot.off{background:var(--dim)}.dot.bad{background:var(--bad)}
 </style>
@@ -85,6 +106,7 @@
     <div class="steps">
       <div class="step-dot" data-s="0"></div><div class="step-dot" data-s="1"></div>
       <div class="step-dot" data-s="2"></div><div class="step-dot" data-s="3"></div>
+      <div class="step-dot" data-s="4"></div>
     </div>
     <h2 id="wiz-title">Willkommen</h2>
     <p class="muted" id="wiz-sub">Richte deinen ersten Standort ein.</p>
@@ -112,7 +134,7 @@
   </div>
 
   <div class="card">
-    <h2>🌡️ Ecowitt</h2>
+    <h2>🌡️ Ecowitt <span class="chip" id="chip-ecowitt"></span></h2>
     <div class="row-check"><input type="checkbox" id="f-eco-en"><label for="f-eco-en">Ecowitt aktiviert</label></div>
     <div class="grid2">
       <div class="field"><label>Application Key</label><input id="f-eco-app"></div>
@@ -123,7 +145,7 @@
   </div>
 
   <div class="card">
-    <h2>🔋 Growatt</h2>
+    <h2>🔋 Growatt <span class="chip" id="chip-growatt"></span></h2>
     <div class="row-check"><input type="checkbox" id="f-gw-en"><label for="f-gw-en">Growatt aktiviert</label></div>
     <div class="grid2">
       <div class="field"><label>Benutzername (ShinePhone)</label><input id="f-gw-user"></div>
@@ -143,6 +165,26 @@
       <div class="field"><label>System-Wirkungsgrad (0–1)</label><input id="f-eff" type="number" step="any"></div>
       <div class="field"><label>Batteriekapazität (kWh)</label><input id="f-cap" type="number" step="any"></div>
       <div class="field"><label>Wind-Schwelle (km/h)</label><input id="f-wind" type="number" step="any"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🚨 Warnschwellen</h2>
+    <p class="muted" style="margin:-4px 0 12px">Das Dashboard zeigt bei Überschreitung ein Warnbanner. Mit aktivierten Benachrichtigungen wird zusätzlich eine E-Mail über die SMTP-Zugangsdaten aus der <code>.env</code> gesendet (max. alle 6 h je Warnung). Leeres Feld = Prüfung aus.</p>
+    <div class="row-check"><input type="checkbox" id="f-al-en"><label for="f-al-en">E-Mail-Benachrichtigungen aktiviert</label></div>
+    <div class="grid2">
+      <div class="field"><label>Batterie-SOC min (%)</label><input id="f-al-soc" type="number" step="any" min="0" max="100"></div>
+      <div class="field"><label>Wind/Böen max (km/h)</label><input id="f-al-wind" type="number" step="any" min="0"></div>
+      <div class="field"><label>Hitze ab (°C)</label><input id="f-al-heat" type="number" step="any"></div>
+      <div class="field"><label>Frost/Kälte ab (°C)</label><input id="f-al-cold" type="number" step="any"></div>
+      <div class="field"><label>Feuergefahr ab Kategorie</label><select id="f-al-fire">
+        <option value="off">Aus</option>
+        <option value="moderate">Mäßig</option>
+        <option value="high">Hoch</option>
+        <option value="very_high">Sehr hoch</option>
+        <option value="extreme">Extrem</option>
+      </select></div>
+      <div class="field"><label>E-Mail-Empfänger (leer = Berichts-Empfänger)</label><input id="f-al-email" type="email" placeholder="user@example.com"></div>
     </div>
   </div>
 
@@ -176,6 +218,17 @@
   <div class="card">
     <h2>🗄️ System</h2>
     <div id="system"><span class="muted">Lade Status …</span></div>
+    <div class="btn-row" style="margin-top:14px">
+      <a id="csv-weather" class="back" href="#" download>⬇ Wetter-CSV (30 Tage)</a>
+      <a id="csv-energy" class="back" href="#" download>⬇ Energie-CSV (30 Tage)</a>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="ghost" id="btn-backup" type="button">Backup herunterladen</button>
+      <button class="ghost" id="btn-restore" type="button">Backup wiederherstellen …</button>
+      <input id="restore-file" type="file" accept="application/json,.json" class="hidden" aria-label="Backup-Datei wählen">
+      <span class="test-status" id="restore-status"></span>
+    </div>
+    <p class="muted" style="margin-top:8px">Das Backup enthält alle Einstellungen inklusive Zugangsdaten – Datei sicher aufbewahren.</p>
   </div>
 
   <div class="btn-row" style="justify-content:space-between">
@@ -191,10 +244,19 @@
 
 <script src="config.js"></script>
 <script>
+/* ── theme: follow the dashboard's choice (wog:theme) or the system ── */
+(function(){
+  const p = localStorage.getItem("wog:theme");
+  if(p==="light" || p==="dark") document.documentElement.dataset.theme = p;
+})();
+
 /* ── config / API base ── */
 const CFG = (typeof CONFIG !== "undefined") ? CONFIG : {};
 const API = ((CFG.BACKEND_URL) || (location.origin + "/api")).replace(/\/$/, "");
 const $ = id => document.getElementById(id);
+/* HTML-escape for every user-editable value rendered via innerHTML (site
+   names, stored keys, status strings) - crafted values must never execute. */
+const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let PIN = sessionStorage.getItem("wog:pin") || "";
 let MODEL = null;          // full settings {display, default_site, sites:[...]}
@@ -256,7 +318,9 @@ const WIZ_STEPS = [
   {title:"Ecowitt", sub:"Wetterstation (optional)", fields:"ecowitt"},
   {title:"Growatt", sub:"Inverter (optional, überspringbar)", fields:"growatt"},
   {title:"Station & Energie", sub:"Name und PV-System", fields:"energy"},
+  {title:"Zusammenfassung", sub:"Bitte prüfen – gespeichert wird erst jetzt.", fields:"summary"},
 ];
+const WIZ_LAST = WIZ_STEPS.length - 1;
 function startWizard(){
   $("wizard").classList.remove("hidden"); $("admin").classList.add("hidden");
   WSITE = MODEL.sites[0] ? JSON.parse(JSON.stringify(MODEL.sites[0])) : blankSite();
@@ -264,45 +328,58 @@ function startWizard(){
 }
 function renderWizard(){
   const step = WIZ_STEPS[WSTEP];
-  $("wiz-title").textContent = `${WSTEP+1}/4 · ${step.title}`;
+  $("wiz-title").textContent = `${WSTEP+1}/${WIZ_STEPS.length} · ${step.title}`;
   $("wiz-sub").textContent = step.sub;
   document.querySelectorAll(".step-dot").forEach((d,i)=>d.classList.toggle("done", i<=WSTEP));
   $("wiz-body").innerHTML = wizFields(step.fields);
   bindTestButtons($("wiz-body"));
   $("wiz-back").style.visibility = WSTEP===0 ? "hidden" : "visible";
-  $("wiz-next").textContent = WSTEP===3 ? "Speichern & Fertig" : "Weiter";
+  $("wiz-next").textContent = WSTEP===WIZ_LAST ? "Speichern & Fertig" : "Weiter";
 }
 function wizFields(kind){
   const s=WSITE;
+  if(kind==="summary"){
+    const row=(k,v)=>`<div class="sumrow"><span class="k">${k}</span><span>${esc(v)}</span></div>`;
+    const eco = s.ecowitt.enabled ? (s.ecowitt.mac?`aktiv · ${s.ecowitt.mac}`:"aktiv (nur Webhook)") : "aus";
+    const gw = s.growatt.enabled ? `aktiv · ${s.growatt.username||"–"}` : "aus";
+    return row("Name", s.name||"–")
+      + row("Koordinaten", `${s.latitude}, ${s.longitude} · ${s.altitude} m`)
+      + row("Zeitzone", s.timezone||"UTC")
+      + row("Ecowitt", eco)
+      + row("Growatt", gw)
+      + row("PV / Batterie", `${s.pv_kwp} kWp · η ${s.pv_efficiency} · ${s.battery_capacity_kwh} kWh`)
+      + row("Wind-Schwelle", `${s.wind_threshold_kmh} km/h`);
+  }
   if(kind==="location") return `
-    <div class="field"><label>Breitengrad</label><input id="w-lat" type="number" step="any" value="${s.latitude??""}"></div>
-    <div class="field"><label>Längengrad</label><input id="w-lng" type="number" step="any" value="${s.longitude??""}"></div>
-    <div class="grid2"><div class="field"><label>Höhe (m)</label><input id="w-alt" type="number" value="${s.altitude??0}"></div>
-    <div class="field"><label>Zeitzone</label><input id="w-tz" value="${s.timezone||""}" placeholder="America/Argentina/Cordoba"></div></div>`;
+    <div class="field"><label>Breitengrad</label><input id="w-lat" type="number" step="any" value="${esc(s.latitude??"")}"></div>
+    <div class="field"><label>Längengrad</label><input id="w-lng" type="number" step="any" value="${esc(s.longitude??"")}"></div>
+    <div class="grid2"><div class="field"><label>Höhe (m)</label><input id="w-alt" type="number" value="${esc(s.altitude??0)}"></div>
+    <div class="field"><label>Zeitzone</label><input id="w-tz" value="${esc(s.timezone||"")}" placeholder="America/Argentina/Cordoba"></div></div>`;
   if(kind==="ecowitt") return `
     <div class="row-check"><input type="checkbox" id="w-eco-en" ${s.ecowitt.enabled?"checked":""}><label for="w-eco-en">Ecowitt aktiviert</label></div>
-    <div class="field"><label>Application Key</label><input id="w-eco-app" value="${s.ecowitt.app_key||""}"></div>
-    <div class="field"><label>API Key</label><input id="w-eco-api" value="${s.ecowitt.api_key||""}"></div>
-    <div class="field"><label>MAC</label><input id="w-eco-mac" value="${s.ecowitt.mac||""}" placeholder="C4:5B:BE:6E:46:15"></div>
+    <div class="field"><label>Application Key</label><input id="w-eco-app" value="${esc(s.ecowitt.app_key||"")}"></div>
+    <div class="field"><label>API Key</label><input id="w-eco-api" value="${esc(s.ecowitt.api_key||"")}"></div>
+    <div class="field"><label>MAC</label><input id="w-eco-mac" value="${esc(s.ecowitt.mac||"")}" placeholder="C4:5B:BE:6E:46:15"></div>
     <div class="btn-row"><button class="ghost" data-test="ecowitt" type="button">Testen</button><span class="test-status" data-status="ecowitt"></span></div>`;
   if(kind==="growatt") return `
     <div class="row-check"><input type="checkbox" id="w-gw-en" ${s.growatt.enabled?"checked":""}><label for="w-gw-en">Growatt aktiviert</label></div>
-    <div class="field"><label>Benutzername</label><input id="w-gw-user" value="${s.growatt.username||""}"></div>
+    <div class="field"><label>Benutzername</label><input id="w-gw-user" value="${esc(s.growatt.username||"")}"></div>
     <div class="field"><label>Passwort</label><input id="w-gw-pass" type="password" value=""></div>
-    <div class="grid2"><div class="field"><label>Plant ID</label><input id="w-gw-plant" value="${s.growatt.plant_id||""}"></div>
-    <div class="field"><label>Inverter SN</label><input id="w-gw-sn" value="${s.growatt.inverter_sn||""}"></div></div>
-    <div class="field"><label>Server-URL</label><input id="w-gw-server" value="${s.growatt.server_url||"https://server.growatt.com"}"></div>
+    <div class="grid2"><div class="field"><label>Plant ID</label><input id="w-gw-plant" value="${esc(s.growatt.plant_id||"")}"></div>
+    <div class="field"><label>Inverter SN</label><input id="w-gw-sn" value="${esc(s.growatt.inverter_sn||"")}"></div></div>
+    <div class="field"><label>Server-URL</label><input id="w-gw-server" value="${esc(s.growatt.server_url||"https://server.growatt.com")}"></div>
     <div class="btn-row"><button class="ghost" data-test="growatt" type="button">Testen</button><span class="test-status" data-status="growatt"></span></div>`;
   return `
-    <div class="field"><label>Stationsname</label><input id="w-name" value="${s.name||""}"></div>
+    <div class="field"><label>Stationsname</label><input id="w-name" value="${esc(s.name||"")}"></div>
     <div class="grid2">
-    <div class="field"><label>PV-Leistung (kWp)</label><input id="w-pv" type="number" step="any" value="${s.pv_kwp??3.6}"></div>
-    <div class="field"><label>Wirkungsgrad (0–1)</label><input id="w-eff" type="number" step="any" value="${s.pv_efficiency??0.75}"></div>
-    <div class="field"><label>Batterie (kWh)</label><input id="w-cap" type="number" step="any" value="${s.battery_capacity_kwh??9.6}"></div>
-    <div class="field"><label>Wind-Schwelle (km/h)</label><input id="w-wind" type="number" value="${s.wind_threshold_kmh??10}"></div></div>`;
+    <div class="field"><label>PV-Leistung (kWp)</label><input id="w-pv" type="number" step="any" value="${esc(s.pv_kwp??3.6)}"></div>
+    <div class="field"><label>Wirkungsgrad (0–1)</label><input id="w-eff" type="number" step="any" value="${esc(s.pv_efficiency??0.75)}"></div>
+    <div class="field"><label>Batterie (kWh)</label><input id="w-cap" type="number" step="any" value="${esc(s.battery_capacity_kwh??9.6)}"></div>
+    <div class="field"><label>Wind-Schwelle (km/h)</label><input id="w-wind" type="number" value="${esc(s.wind_threshold_kmh??10)}"></div></div>`;
 }
 function wizCollect(kind){
   const s=WSITE, v=id=>{const e=$(id);return e?e.value:undefined;};
+  if(kind==="summary") return;  // read-only step
   if(kind==="location"){ s.latitude=parseFloat(v("w-lat"))||0; s.longitude=parseFloat(v("w-lng"))||0; s.altitude=parseFloat(v("w-alt"))||0; s.timezone=v("w-tz")||"UTC"; }
   if(kind==="ecowitt"){ s.ecowitt={enabled:$("w-eco-en").checked,app_key:v("w-eco-app"),api_key:v("w-eco-api"),mac:v("w-eco-mac")}; }
   if(kind==="growatt"){ s.growatt={enabled:$("w-gw-en").checked,username:v("w-gw-user"),password:v("w-gw-pass"),plant_id:v("w-gw-plant"),inverter_sn:v("w-gw-sn"),server_url:v("w-gw-server")||"https://server.growatt.com"}; }
@@ -310,7 +387,7 @@ function wizCollect(kind){
 }
 $("wiz-next").onclick = async ()=>{
   wizCollect(WIZ_STEPS[WSTEP].fields);
-  if(WSTEP<3){ WSTEP++; renderWizard(); return; }
+  if(WSTEP<WIZ_LAST){ WSTEP++; renderWizard(); return; }
   // finish: save as the (first) site
   try{
     await apiSend("/settings","POST",{display:MODEL.display||{language:"de"}, sites:[stripForSave(WSITE)]});
@@ -342,7 +419,7 @@ function updateReportLink(){
 }
 function renderSitesBar(){
   $("sites-bar").innerHTML = MODEL.sites.map((s,i)=>
-    `<div class="site-tab ${i===CUR?"active":""}" data-i="${i}">${s.name||s.site_id}</div>`).join("");
+    `<div class="site-tab ${i===CUR?"active":""}" data-i="${i}">${esc(s.name||s.site_id)}</div>`).join("");
   document.querySelectorAll(".site-tab").forEach(el=>el.onclick=()=>{ collectForm(); CUR=+el.dataset.i; renderSitesBar(); loadSiteIntoForm(); });
 }
 function loadSiteIntoForm(){
@@ -353,8 +430,32 @@ function loadSiteIntoForm(){
   const g=s.growatt||{}; $("f-gw-en").checked=!!g.enabled; $("f-gw-user").value=g.username||""; $("f-gw-pass").value=""; $("f-gw-pass").placeholder=(g.password==="********")?"•••••• (unverändert)":"";
   $("f-gw-plant").value=g.plant_id||""; $("f-gw-sn").value=g.inverter_sn||""; $("f-gw-server").value=g.server_url||"https://server.growatt.com";
   $("f-pv").value=s.pv_kwp??3.6; $("f-eff").value=s.pv_efficiency??0.75; $("f-cap").value=s.battery_capacity_kwh??9.6; $("f-wind").value=s.wind_threshold_kmh??10;
+  const al=s.alerts||{}; $("f-al-en").checked=!!al.enabled;
+  $("f-al-soc").value=al.soc_min??20; $("f-al-wind").value=al.wind_max??80;
+  $("f-al-heat").value=al.heat_max??38; $("f-al-cold").value=al.cold_min??0;
+  $("f-al-fire").value=al.fire_min_category||"very_high"; $("f-al-email").value=al.email_to||"";
   document.querySelectorAll("[data-status]").forEach(el=>el.textContent="");
+  updateChips();
+  updateExportLinks();
   if($("rep-download")) updateReportLink();   // keep the download link on the active site
+}
+
+/* Service status chips: not configured / configured-untested / test result. */
+function setChip(id, cls, text){ const c=$(id); if(c){ c.className="chip "+cls; c.textContent=text; } }
+function updateChips(){
+  const s = MODEL.sites[CUR]; if(!s) return;
+  const e=s.ecowitt||{}, g=s.growatt||{};
+  if(!e.enabled) setChip("chip-ecowitt","","nicht konfiguriert");
+  else setChip("chip-ecowitt","todo",(e.mac||e.app_key)?"noch nicht getestet":"unvollständig");
+  if(!g.enabled) setChip("chip-growatt","","nicht konfiguriert");
+  else setChip("chip-growatt","todo",g.username?"noch nicht getestet":"unvollständig");
+}
+
+function updateExportLinks(){
+  const site = MODEL.sites[CUR] && MODEL.sites[CUR].site_id;
+  const q = site ? "site="+encodeURIComponent(site)+"&" : "";
+  if($("csv-weather")) $("csv-weather").href = `${API}/export/csv?${q}bucket=weather&days=30&every=1h`;
+  if($("csv-energy")) $("csv-energy").href = `${API}/export/csv?${q}bucket=energy&days=30&every=1h`;
 }
 function collectForm(){
   const s = MODEL.sites[CUR]; if(!s) return;
@@ -365,6 +466,10 @@ function collectForm(){
   s.growatt={enabled:$("f-gw-en").checked,username:$("f-gw-user").value,password:pass,plant_id:$("f-gw-plant").value,inverter_sn:$("f-gw-sn").value,server_url:$("f-gw-server").value||"https://server.growatt.com"};
   s.pv_kwp=parseFloat($("f-pv").value)||0; s.pv_efficiency=parseFloat($("f-eff").value)||0.75;
   s.battery_capacity_kwh=parseFloat($("f-cap").value)||0; s.wind_threshold_kmh=parseFloat($("f-wind").value)||10;
+  const num=id=>{const v=$(id).value.trim(); return v===""?null:parseFloat(v);};  // empty = check disabled
+  s.alerts={enabled:$("f-al-en").checked, soc_min:num("f-al-soc"), wind_max:num("f-al-wind"),
+    heat_max:num("f-al-heat"), cold_min:num("f-al-cold"),
+    fire_min_category:$("f-al-fire").value, email_to:$("f-al-email").value.trim()};
 }
 function stripForSave(s){
   // Drop masked passwords so the backend keeps the stored secret.
@@ -375,7 +480,8 @@ function stripForSave(s){
 $("btn-add").onclick = ()=>{ collectForm(); MODEL.sites.push(blankSite()); CUR=MODEL.sites.length-1; renderSitesBar(); loadSiteIntoForm(); };
 $("btn-delete").onclick = ()=>{
   if(MODEL.sites.length<=1){ toast("Mindestens ein Standort nötig","err"); return; }
-  if(!confirm("Diesen Standort wirklich löschen?")) return;
+  const name = (MODEL.sites[CUR] && (MODEL.sites[CUR].name || MODEL.sites[CUR].site_id)) || "diesen Standort";
+  if(!confirm(`Standort „${name}“ wirklich löschen?\n\nDie Einstellung wird erst mit „Speichern“ endgültig übernommen.`)) return;
   MODEL.sites.splice(CUR,1); CUR=0; renderSitesBar(); loadSiteIntoForm();
 };
 $("btn-save").onclick = async ()=>{
@@ -419,7 +525,8 @@ function bindTestButtons(root){
       try{
         const r = await apiSend("/settings/test","POST",body);
         if(statusEl){ statusEl.textContent=(r.ok?"✓ ":"✗ ")+r.detail; statusEl.className="test-status "+(r.ok?"ok":"err"); }
-      }catch(e){ if(statusEl){ statusEl.textContent="Fehler"; statusEl.className="test-status err"; } handleErr(e,true); }
+        setChip("chip-"+service, r.ok?"ok":"err", r.ok?"Verbindung OK":"Verbindung fehlgeschlagen");
+      }catch(e){ if(statusEl){ statusEl.textContent="Fehler"; statusEl.className="test-status err"; } setChip("chip-"+service,"err","Verbindung fehlgeschlagen"); handleErr(e,true); }
       finally{ btn.disabled=false; }
     };
   });
@@ -432,20 +539,68 @@ function currentEditingSite(){
 }
 
 /* ── system status ── */
+function fmtWhen(iso){
+  if(!iso) return "nie";
+  try{ const d=new Date(iso); return d.toLocaleString("de",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }
+  catch(e){ return "–"; }
+}
+function collectorRows(s){
+  const col = s.collectors||{};
+  return Object.keys(col).sort().map(name=>{
+    const c=col[name]||{};
+    const ok = c.last_success && !c.error;
+    return `<div class="sysrow"><span style="padding-left:14px">↳ ${esc(name)}</span>
+      <span><span class="dot ${ok?'ok':(c.error?'bad':'off')}"></span>zuletzt OK: ${esc(fmtWhen(c.last_success))}
+      ${c.error?`<div class="syserr">Fehler ${esc(fmtWhen(c.last_error))}: ${esc(c.error)}</div>`:""}</span></div>`;
+  }).join("");
+}
 async function loadSystem(){
   try{
     const st = await apiGet("/settings/status");
     const inf = st.influxdb||{};
-    const sitesRows = (st.sites||[]).map(s=>`<div class="sysrow"><span>${s.name||s.site_id}</span>
+    const sitesRows = (st.sites||[]).map(s=>`<div class="sysrow"><span>${esc(s.name||s.site_id)}</span>
       <span><span class="dot ${s.ecowitt.last_seen?'ok':(s.ecowitt.enabled?'bad':'off')}"></span>Ecowitt
       &nbsp;<span class="dot ${s.growatt.last_seen?'ok':(s.growatt.enabled?'bad':'off')}"></span>Growatt
-      &nbsp;· ${s.weather_points} Wetter / ${s.energy_points} Energie</span></div>`).join("");
+      &nbsp;· ${esc(s.weather_points)} Wetter / ${esc(s.energy_points)} Energie</span></div>${collectorRows(s)}`).join("");
     $("system").innerHTML = `
-      <div class="sysrow"><span>InfluxDB</span><span><span class="dot ${inf.ok?'ok':'bad'}"></span>${inf.ok?'verbunden':'offline'} · ${inf.url||''}</span></div>
+      <div class="sysrow"><span>InfluxDB</span><span><span class="dot ${inf.ok?'ok':'bad'}"></span>${inf.ok?'verbunden':'offline'} · ${esc(inf.url||'')}</span></div>
       <div class="sysrow"><span>Datenpunkte</span><span>${(inf.buckets||{}).weather||0} Wetter · ${(inf.buckets||{}).energy||0} Energie · ${(inf.buckets||{}).forecasts||0} Forecasts</span></div>
       ${sitesRows}`;
   }catch(e){ $("system").innerHTML='<span class="muted">Status nicht verfügbar.</span>'; }
 }
+
+/* ── backup / restore ── */
+$("btn-backup").onclick = async ()=>{
+  try{
+    const r = await fetch(API+"/settings/backup",{headers:headers()});
+    if(r.status===401) throw {pin:true};
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "weather-off-grid-settings.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }catch(e){ handleErr(e); }
+};
+$("btn-restore").onclick = ()=>$("restore-file").click();
+$("restore-file").onchange = async ()=>{
+  const file = $("restore-file").files[0];
+  const status = $("restore-status");
+  if(!file) return;
+  if(!confirm("Alle aktuellen Einstellungen durch das Backup ersetzen?")) { $("restore-file").value=""; return; }
+  try{
+    const payload = JSON.parse(await file.text());
+    status.textContent="… stelle wieder her"; status.className="test-status";
+    MODEL = await apiSend("/settings/restore","POST",payload);
+    CUR=0; renderSitesBar(); loadSiteIntoForm(); loadSystem();
+    status.textContent="✓ wiederhergestellt"; status.className="test-status ok";
+    toast("Backup wiederhergestellt ✓");
+  }catch(e){
+    status.textContent="✗ "+(e&&e.message||"ungültige Datei"); status.className="test-status err";
+    handleErr(e,true);
+  }finally{ $("restore-file").value=""; }
+};
 
 function handleErr(e, quiet){
   if(e&&e.pin){ sessionStorage.removeItem("wog:pin"); PIN=""; showPinGate(); return; }

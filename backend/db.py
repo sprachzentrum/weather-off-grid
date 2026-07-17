@@ -8,8 +8,14 @@ this module so connection handling lives in one place.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, tzinfo
 from typing import Any, Iterable
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None
 
 from influxdb_client import InfluxDBClient, Point, BucketRetentionRules
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -118,6 +124,46 @@ def write_points(bucket: str, points: Iterable[Point]) -> None:
 def query(flux: str) -> list:
     """Run a Flux query and return the raw FluxTable list."""
     return get_client().query_api().query(flux, org=config.INFLUXDB_ORG)
+
+
+# ── local-time day boundaries for Flux aggregations ─────────────────────────
+_TZ_NAME_RE = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}$")
+
+
+def _safe_tz_name(tz_name: str | None) -> str:
+    """Validated IANA timezone name, falling back to UTC. The strict pattern
+    also guarantees the name is safe to interpolate into a Flux query."""
+    if tz_name and _TZ_NAME_RE.match(tz_name):
+        return tz_name
+    if tz_name:
+        log.warning("invalid timezone %r - falling back to UTC", tz_name)
+    return "UTC"
+
+
+def flux_location(tz_name: str | None) -> str:
+    """Flux prelude that makes aggregateWindow(every: 1d) use *local* calendar
+    days instead of UTC days (a UTC window starts at 21:00 local in Argentina,
+    assigning evening readings to the wrong day)."""
+    return (
+        'import "timezone"\n'
+        f'option location = timezone.location(name: "{_safe_tz_name(tz_name)}")\n'
+    )
+
+
+def tzinfo_for(tz_name: str | None) -> tzinfo:
+    """tzinfo for a validated timezone name (UTC when unknown/unavailable)."""
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(_safe_tz_name(tz_name))
+        except Exception:  # noqa: BLE001 - missing tzdata entry
+            pass
+    return timezone.utc
+
+
+def site_tz(site_id: str | None) -> tuple[str, tzinfo]:
+    """(validated tz name, tzinfo) for a site - shared by the daily readers."""
+    name = _safe_tz_name(settings_store.site_timezone_name(site_id))
+    return name, tzinfo_for(name)
 
 
 def _site_filter(site_id: str | None) -> str:

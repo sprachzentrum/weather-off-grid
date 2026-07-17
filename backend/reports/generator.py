@@ -98,8 +98,12 @@ def _site_line(site_id: str | None) -> str:
 
 def _daily(bucket: str, measurement: str, field: str, fn: str,
            site_id: str | None, days: int) -> dict[str, float]:
-    """Per-day aggregate of a field -> {date_iso: value}. Empty on error."""
-    flux = f'''
+    """Per-day aggregate of a field -> {date_iso: value}. Empty on error.
+
+    Days are the site's *local* calendar days (Flux `location` option), so the
+    report's daily rows match the local span produced by _day_range()."""
+    tz_name, tz = db.site_tz(site_id)
+    flux = f'''{db.flux_location(tz_name)}
     from(bucket: "{bucket}")
       |> range(start: -{days}d)
       |> filter(fn: (r) => r._measurement == "{measurement}" and r._field == "{field}"{_site_line(site_id)})
@@ -111,7 +115,7 @@ def _daily(bucket: str, measurement: str, field: str, fn: str,
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    out[rec.get_time().date().isoformat()] = float(v)
+                    out[rec.get_time().astimezone(tz).date().isoformat()] = float(v)
     except Exception as exc:  # noqa: BLE001
         log.debug("daily agg %s/%s failed: %s", field, fn, exc)
     return out

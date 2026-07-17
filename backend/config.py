@@ -74,10 +74,21 @@ TIMEZONE = _get("TIMEZONE", "America/Argentina/Cordoba")
 BACKEND_PORT = _get_int("BACKEND_PORT", 8000)
 
 # ── Admin / settings ──────────────────────────────────────────────────────
-# Empty ADMIN_PIN = settings page is open (fine for trusted local networks).
+# PIN protecting the settings/admin API. When empty, a random PIN is generated
+# on first start and persisted to DATA_DIR/admin_pin.txt - the admin API is
+# never silently open. Set ADMIN_ALLOW_OPEN=true to explicitly run without a
+# PIN (development / fully trusted network only).
 ADMIN_PIN = _get("ADMIN_PIN")
+ADMIN_ALLOW_OPEN = _get("ADMIN_ALLOW_OPEN", "false").lower() in ("1", "true", "yes")
 # Where the persisted settings.json lives (mounted as a docker volume).
 DATA_DIR = _get("DATA_DIR", "data")
+
+# ── CORS ──────────────────────────────────────────────────────────────────
+# Comma-separated list of frontend origins allowed to call the API from the
+# browser (e.g. "http://192.168.1.10:8080,https://wetter.example.com").
+# Empty (default) = no cross-origin access; fine when the backend serves the
+# PWA itself (docker-compose default). "*" restores the old open behaviour.
+CORS_ORIGINS = [o.strip() for o in _get("CORS_ORIGINS").split(",") if o.strip()]
 
 # ── Polling intervals (seconds) ───────────────────────────────────────────
 ECOWITT_POLL_INTERVAL = _get_int("ECOWITT_POLL_INTERVAL", 300)

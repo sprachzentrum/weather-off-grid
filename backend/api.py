@@ -49,6 +49,14 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+async def aclose_client() -> None:
+    """Close the shared Open-Meteo client (called from the app shutdown hook)."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
 def invalidate_cache() -> None:
     """Drop the per-site forecast cache (called after settings change)."""
     _cache.clear()
@@ -57,7 +65,10 @@ def invalidate_cache() -> None:
 def _resolve_site(site_id: str | None) -> dict:
     site = settings_store.get_site(site_id)
     if site is None:
-        raise HTTPException(status_code=404, detail="no sites configured")
+        # An unknown explicit id is a 404 (never silently serve another site's
+        # data); with no id at all it means nothing is configured yet.
+        detail = "site not found" if site_id else "no sites configured"
+        raise HTTPException(status_code=404, detail=detail)
     return site
 
 

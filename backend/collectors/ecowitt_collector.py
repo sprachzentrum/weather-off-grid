@@ -13,9 +13,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 import config
 import db
@@ -25,6 +26,27 @@ log = logging.getLogger("ecowitt")
 router = APIRouter()
 
 ECOWITT_API_URL = "https://api.ecowitt.net/api/v3/device/real_time"
+
+# Plausible physical ranges per metric field. Values outside are dropped so a
+# corrupt (or malicious) payload cannot poison charts, the microclimate model
+# or the fire-danger index.
+PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
+    "temperature_outdoor": (-60.0, 65.0),
+    "temperature_indoor": (-60.0, 65.0),
+    "temperature_feels_like": (-90.0, 80.0),
+    "dewpoint": (-90.0, 65.0),
+    "humidity_outdoor": (0.0, 100.0),
+    "humidity_indoor": (0.0, 100.0),
+    "wind_speed": (0.0, 300.0),
+    "wind_gust": (0.0, 350.0),
+    "wind_direction": (0.0, 360.0),
+    "pressure_relative": (800.0, 1100.0),
+    "pressure_absolute": (500.0, 1100.0),
+    "rain_rate": (0.0, 500.0),
+    "rain_daily": (0.0, 1000.0),
+    "solar_radiation": (0.0, 1700.0),
+    "uv_index": (0.0, 25.0),
+}
 
 
 # ── Unit conversions (imperial -> metric) ──────────────────────────────────
@@ -112,26 +134,57 @@ def parse_webhook_form(form: dict) -> dict:
         "uv_index": _f(form.get("uv")),
     }
     fields.update(_build_metric_fields(temp_c, hum, wind_kmh))
-    return {k: v for k, v in fields.items() if v is not None}
+    return {
+        k: v for k, v in fields.items()
+        if v is not None and _in_range(k, v)
+    }
+
+
+def _in_range(field: str, value: float) -> bool:
+    lo, hi = PLAUSIBLE_RANGES.get(field, (float("-inf"), float("inf")))
+    return lo <= value <= hi
 
 
 def _none_round(fn, value, ndigits: int = 2):
     return round(fn(value), ndigits) if value is not None else None
 
 
+# Throttle for rejected-webhook log lines: one per station identifier / minute,
+# so an unauthenticated flood cannot fill the logs.
+_reject_log_at: dict[str, float] = {}
+
+
+def _log_rejected(mac, client: str) -> None:
+    key = str(mac)[:24] or "?"
+    now = time.monotonic()
+    if now - _reject_log_at.get(key, float("-inf")) >= 60:
+        _reject_log_at[key] = now
+        log.warning("webhook rejected: unknown station mac=%s from %s", key, client)
+
+
 @router.post("/api/ecowitt/webhook")
 async def ecowitt_webhook(request: Request):
-    """Receive a station push, route it to a site by MAC, write it to InfluxDB."""
+    """Receive a station push, route it to a site by MAC, write it to InfluxDB.
+
+    Payloads whose MAC/PASSKEY matches no configured station are rejected with
+    401 (see settings_store.site_for_ecowitt for the documented first-run
+    exception), so arbitrary clients cannot inject weather data.
+    """
     form = dict((await request.form()))
+
+    # Identify which site this station belongs to (by MAC, else PASSKEY hash).
+    mac = form.get("MAC") or form.get("mac") or form.get("ID")
+    site = settings_store.site_for_ecowitt(mac, form.get("PASSKEY"))
+    if site is None:
+        _log_rejected(mac, request.client.host if request.client else "?")
+        raise HTTPException(status_code=401, detail="unknown station")
+
     fields = parse_webhook_form(form)
     if not fields:
         log.warning("webhook payload had no usable fields: %s", list(form.keys()))
         return {"status": "ignored", "reason": "no usable fields"}
 
-    # Identify which site this station belongs to (by MAC, else PASSKEY hash).
-    mac = form.get("MAC") or form.get("mac") or form.get("ID")
-    site = settings_store.site_for_ecowitt(mac, form.get("PASSKEY"))
-    site_id = site["site_id"] if site else "default"
+    site_id = site["site_id"]
     station = form.get("PASSKEY") or form.get("stationtype") or mac or "ecowitt"
     try:
         db.write_point(
@@ -141,8 +194,9 @@ async def ecowitt_webhook(request: Request):
             tags={"source": "webhook", "station": str(station)[:24], "site_id": site_id},
         )
     except Exception as exc:  # noqa: BLE001
+        # Log the details server-side only; no internals in the response.
         log.error("influx write failed: %s", exc)
-        return {"status": "error", "detail": str(exc)}
+        raise HTTPException(status_code=503, detail="storage unavailable")
 
     log.info("webhook stored %d fields for site=%s", len(fields), site_id)
     return {"status": "ok", "fields": len(fields), "site_id": site_id}

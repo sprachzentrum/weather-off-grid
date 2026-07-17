@@ -133,7 +133,9 @@ def chill_hours(site_id: str | None, days: int = 60) -> int | None:
 
 
 def _daily_extreme(site_id: str | None, days: int, fn: str) -> dict[str, float]:
-    flux = f'''
+    """Daily min/max keyed by the site's *local* calendar day (Flux location)."""
+    tz_name, tz = db.site_tz(site_id)
+    flux = f'''{db.flux_location(tz_name)}
     from(bucket: "{config.BUCKET_WEATHER}")
       |> range(start: -{days}d)
       |> filter(fn: (r) => r._measurement == "station" and r._field == "temperature_outdoor"{_site_line(site_id)})
@@ -145,7 +147,7 @@ def _daily_extreme(site_id: str | None, days: int, fn: str) -> dict[str, float]:
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    out[rec.get_time().date().isoformat()] = float(v)
+                    out[rec.get_time().astimezone(tz).date().isoformat()] = float(v)
     except Exception as exc:  # noqa: BLE001
         log.debug("daily extreme (%s) query failed: %s", fn, exc)
     return out

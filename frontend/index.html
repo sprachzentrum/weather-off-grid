@@ -486,6 +486,9 @@ const t = (k, vars={}) => {
 const $ = id => document.getElementById(id);
 const fmt = (v,d=1) => (v===null||v===undefined||v==="") ? "–" : (+v).toFixed(d).replace(".",",");
 const fmt0 = v => fmt(v,0);
+/* HTML-escape for every user-editable value rendered via innerHTML (site
+   names etc.) - a crafted name must never execute as markup/script. */
+const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let CFG = (typeof CONFIG !== "undefined") ? Object.assign({}, CONFIG) : {};
 let API = ((CFG.BACKEND_URL) || (location.origin + "/api")).replace(/\/$/, "");
@@ -543,7 +546,7 @@ function resolveSite(){
 function renderSiteSwitch(){
   const sel = $("site-switch");
   if(SITES.length > 1){
-    sel.innerHTML = SITES.map(s=>`<option value="${s.site_id}" ${s.site_id===SITE?"selected":""}>${s.name||s.site_id}</option>`).join("");
+    sel.innerHTML = SITES.map(s=>`<option value="${esc(s.site_id)}" ${s.site_id===SITE?"selected":""}>${esc(s.name||s.site_id)}</option>`).join("");
     sel.classList.remove("hidden");
     sel.onchange = () => { location.hash = sel.value; };
   } else sel.classList.add("hidden");

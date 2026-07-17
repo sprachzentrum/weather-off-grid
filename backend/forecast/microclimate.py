@@ -66,11 +66,17 @@ def _site_line(site_id: str | None) -> str:
 def _daily_agg(field: str, fn: str, site_id: str | None) -> dict[str, float]:
     """Per-day aggregate of a measured weather field -> {date: value}.
 
+    Days are the site's *local* calendar days: the Flux `location` option makes
+    aggregateWindow(every: 1d) cut at local midnight instead of UTC midnight,
+    so measured days line up with the forecast target_date (a UTC window starts
+    at 21:00 local in Argentina and would smear evening data into the next day).
+
     timeSrc:"_start" labels each daily window with its start day; the default
     "_stop" would label it with the next day's midnight and shift every measured
     day +1 relative to the forecast target_date, mispairing the data.
     """
-    flux = f'''
+    tz_name, tz = db.site_tz(site_id)
+    flux = f'''{db.flux_location(tz_name)}
     from(bucket: "{config.BUCKET_WEATHER}")
       |> range(start: -{LOOKBACK_DAYS}d)
       |> filter(fn: (r) => r._measurement == "station" and r._field == "{field}"{_site_line(site_id)})
@@ -82,7 +88,9 @@ def _daily_agg(field: str, fn: str, site_id: str | None) -> dict[str, float]:
             for rec in table.records:
                 value = rec.get_value()
                 if value is not None:
-                    out[rec.get_time().date().isoformat()] = float(value)
+                    # Window starts are local midnights returned as UTC instants;
+                    # convert back to the site tz before taking the date.
+                    out[rec.get_time().astimezone(tz).date().isoformat()] = float(value)
     except Exception as exc:  # noqa: BLE001
         log.debug("measured agg %s/%s failed: %s", field, fn, exc)
     return out

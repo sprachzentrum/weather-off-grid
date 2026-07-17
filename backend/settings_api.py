@@ -10,19 +10,21 @@ Settings / admin API.
   POST   /api/sites               add / update one site               [PIN]
   DELETE /api/sites/{site_id}     remove a site                       [PIN]
 
-[PIN]: protected by ADMIN_PIN when set. If ADMIN_PIN is empty, the endpoints are
-open (acceptable on a trusted local network, as documented).
+[PIN]: protected by the admin PIN (see security.py). The PIN is accepted only
+via the X-Admin-Pin header - never as a query parameter, because URLs end up in
+browser history, proxies and logs. Failed attempts are rate-limited per client.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
 
 import api
 import config
 import db
+import security
 import settings_store
 from collector_manager import manager
 from collectors import ecowitt_collector, growatt_collector
@@ -33,17 +35,30 @@ router = APIRouter(prefix="/api")
 
 
 # ── PIN protection ─────────────────────────────────────────────────────────
-def _pin_ok(pin: str | None) -> bool:
-    if not config.ADMIN_PIN:
+def _client_id(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limited(request: Request, pin: str | None) -> bool:
+    """Rate-limited PIN check shared by require_pin and /settings/verify-pin."""
+    if not security.pin_required():
         return True
-    return pin == config.ADMIN_PIN
+    client = _client_id(request)
+    if security.limiter.blocked(client):
+        raise HTTPException(status_code=429,
+                            detail="too many failed attempts - try again later")
+    if security.check_pin(pin):
+        security.limiter.register_success(client)
+        return True
+    security.limiter.register_failure(client)
+    return False
 
 
 async def require_pin(
+    request: Request,
     x_admin_pin: str | None = Header(default=None),
-    pin: str | None = Query(default=None),
 ) -> None:
-    if not _pin_ok(x_admin_pin or pin):
+    if not _check_rate_limited(request, x_admin_pin):
         raise HTTPException(status_code=401, detail="invalid or missing admin PIN")
 
 
@@ -62,8 +77,9 @@ async def settings_frontend():
 
 
 @router.post("/settings/verify-pin")
-async def verify_pin(payload: dict = Body(default={})):
-    return {"ok": _pin_ok(payload.get("pin")), "required": bool(config.ADMIN_PIN)}
+async def verify_pin(request: Request, payload: dict = Body(default={})):
+    ok = _check_rate_limited(request, payload.get("pin"))
+    return {"ok": ok, "required": security.pin_required()}
 
 
 # ── protected ──────────────────────────────────────────────────────────────
@@ -74,16 +90,22 @@ async def get_settings():
 
 @router.post("/settings", dependencies=[Depends(require_pin)])
 async def post_settings(payload: dict = Body(...)):
-    result = settings_store.apply_update(payload)
+    try:
+        result = settings_store.apply_update(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await _after_change()
     return result
 
 
 @router.post("/sites", dependencies=[Depends(require_pin)])
 async def post_site(site: dict = Body(...)):
-    saved = settings_store.upsert_site(site)
+    try:
+        saved = settings_store.upsert_site(site)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await _after_change()
-    return settings_store._mask_site(saved)
+    return settings_store.mask_site(saved)
 
 
 @router.delete("/sites/{site_id}", dependencies=[Depends(require_pin)])
@@ -137,6 +159,11 @@ async def settings_test(payload: dict = Body(...)):
     site = payload.get("site")
     if not isinstance(site, dict):
         site = settings_store.get_site(payload.get("site_id")) or {}
+    else:
+        # The form round-trips masked secrets ("********"); swap them back for
+        # the stored values so a connection test can run without re-typing them.
+        stored = settings_store.get_site(site.get("site_id")) if site.get("site_id") else None
+        site = settings_store.unmask_site(site, stored)
     # Ensure nested groups exist so collectors can read them.
     site = {"site_id": site.get("site_id", "test"), **site}
     site.setdefault("ecowitt", {})

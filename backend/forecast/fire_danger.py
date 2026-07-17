@@ -112,9 +112,11 @@ def daily_rain(site_id: str | None, days: int = RAIN_LOOKBACK_DAYS) -> dict[str,
     """
     Per-day rain total (mm) -> {date_iso: mm}. `rain_daily` is a cumulative
     counter that resets at local midnight, so its daily MAX is the day's total
-    (same approach the microclimate model uses).
+    (same approach the microclimate model uses). Days are the site's *local*
+    calendar days (Flux `location` option), matching the counter's reset time.
     """
-    flux = f'''
+    tz_name, tz = db.site_tz(site_id)
+    flux = f'''{db.flux_location(tz_name)}
     from(bucket: "{config.BUCKET_WEATHER}")
       |> range(start: -{days}d)
       |> filter(fn: (r) => r._measurement == "station" and r._field == "rain_daily"{_site_line(site_id)})
@@ -126,7 +128,7 @@ def daily_rain(site_id: str | None, days: int = RAIN_LOOKBACK_DAYS) -> dict[str,
             for rec in table.records:
                 v = rec.get_value()
                 if v is not None:
-                    out[rec.get_time().date().isoformat()] = float(v)
+                    out[rec.get_time().astimezone(tz).date().isoformat()] = float(v)
     except Exception as exc:  # noqa: BLE001
         log.debug("daily_rain query failed: %s", exc)
     return out
@@ -139,11 +141,15 @@ def days_since_rain(site_id: str | None, today_iso: str | None = None) -> int:
     Counts back from today over the daily rain history; 0 means it rained
     significantly today. If no rain is found in the lookback window, returns the
     window length (a long dry spell) so the drought factor saturates at 10.
+    "Today" defaults to the site's local date, not the server's.
     """
-    from datetime import date
+    from datetime import date, datetime
 
     rain = daily_rain(site_id)
-    today = date.fromisoformat(today_iso) if today_iso else date.today()
+    if today_iso:
+        today = date.fromisoformat(today_iso)
+    else:
+        today = datetime.now(db.site_tz(site_id)[1]).date()
     for back in range(0, RAIN_LOOKBACK_DAYS + 1):
         day = (today.toordinal() - back)
         iso = date.fromordinal(day).isoformat()

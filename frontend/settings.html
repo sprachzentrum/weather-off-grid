@@ -195,6 +195,9 @@
 const CFG = (typeof CONFIG !== "undefined") ? CONFIG : {};
 const API = ((CFG.BACKEND_URL) || (location.origin + "/api")).replace(/\/$/, "");
 const $ = id => document.getElementById(id);
+/* HTML-escape for every user-editable value rendered via innerHTML (site
+   names, stored keys, status strings) - crafted values must never execute. */
+const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 let PIN = sessionStorage.getItem("wog:pin") || "";
 let MODEL = null;          // full settings {display, default_site, sites:[...]}
@@ -275,31 +278,31 @@ function renderWizard(){
 function wizFields(kind){
   const s=WSITE;
   if(kind==="location") return `
-    <div class="field"><label>Breitengrad</label><input id="w-lat" type="number" step="any" value="${s.latitude??""}"></div>
-    <div class="field"><label>Längengrad</label><input id="w-lng" type="number" step="any" value="${s.longitude??""}"></div>
-    <div class="grid2"><div class="field"><label>Höhe (m)</label><input id="w-alt" type="number" value="${s.altitude??0}"></div>
-    <div class="field"><label>Zeitzone</label><input id="w-tz" value="${s.timezone||""}" placeholder="America/Argentina/Cordoba"></div></div>`;
+    <div class="field"><label>Breitengrad</label><input id="w-lat" type="number" step="any" value="${esc(s.latitude??"")}"></div>
+    <div class="field"><label>Längengrad</label><input id="w-lng" type="number" step="any" value="${esc(s.longitude??"")}"></div>
+    <div class="grid2"><div class="field"><label>Höhe (m)</label><input id="w-alt" type="number" value="${esc(s.altitude??0)}"></div>
+    <div class="field"><label>Zeitzone</label><input id="w-tz" value="${esc(s.timezone||"")}" placeholder="America/Argentina/Cordoba"></div></div>`;
   if(kind==="ecowitt") return `
     <div class="row-check"><input type="checkbox" id="w-eco-en" ${s.ecowitt.enabled?"checked":""}><label for="w-eco-en">Ecowitt aktiviert</label></div>
-    <div class="field"><label>Application Key</label><input id="w-eco-app" value="${s.ecowitt.app_key||""}"></div>
-    <div class="field"><label>API Key</label><input id="w-eco-api" value="${s.ecowitt.api_key||""}"></div>
-    <div class="field"><label>MAC</label><input id="w-eco-mac" value="${s.ecowitt.mac||""}" placeholder="C4:5B:BE:6E:46:15"></div>
+    <div class="field"><label>Application Key</label><input id="w-eco-app" value="${esc(s.ecowitt.app_key||"")}"></div>
+    <div class="field"><label>API Key</label><input id="w-eco-api" value="${esc(s.ecowitt.api_key||"")}"></div>
+    <div class="field"><label>MAC</label><input id="w-eco-mac" value="${esc(s.ecowitt.mac||"")}" placeholder="C4:5B:BE:6E:46:15"></div>
     <div class="btn-row"><button class="ghost" data-test="ecowitt" type="button">Testen</button><span class="test-status" data-status="ecowitt"></span></div>`;
   if(kind==="growatt") return `
     <div class="row-check"><input type="checkbox" id="w-gw-en" ${s.growatt.enabled?"checked":""}><label for="w-gw-en">Growatt aktiviert</label></div>
-    <div class="field"><label>Benutzername</label><input id="w-gw-user" value="${s.growatt.username||""}"></div>
+    <div class="field"><label>Benutzername</label><input id="w-gw-user" value="${esc(s.growatt.username||"")}"></div>
     <div class="field"><label>Passwort</label><input id="w-gw-pass" type="password" value=""></div>
-    <div class="grid2"><div class="field"><label>Plant ID</label><input id="w-gw-plant" value="${s.growatt.plant_id||""}"></div>
-    <div class="field"><label>Inverter SN</label><input id="w-gw-sn" value="${s.growatt.inverter_sn||""}"></div></div>
-    <div class="field"><label>Server-URL</label><input id="w-gw-server" value="${s.growatt.server_url||"https://server.growatt.com"}"></div>
+    <div class="grid2"><div class="field"><label>Plant ID</label><input id="w-gw-plant" value="${esc(s.growatt.plant_id||"")}"></div>
+    <div class="field"><label>Inverter SN</label><input id="w-gw-sn" value="${esc(s.growatt.inverter_sn||"")}"></div></div>
+    <div class="field"><label>Server-URL</label><input id="w-gw-server" value="${esc(s.growatt.server_url||"https://server.growatt.com")}"></div>
     <div class="btn-row"><button class="ghost" data-test="growatt" type="button">Testen</button><span class="test-status" data-status="growatt"></span></div>`;
   return `
-    <div class="field"><label>Stationsname</label><input id="w-name" value="${s.name||""}"></div>
+    <div class="field"><label>Stationsname</label><input id="w-name" value="${esc(s.name||"")}"></div>
     <div class="grid2">
-    <div class="field"><label>PV-Leistung (kWp)</label><input id="w-pv" type="number" step="any" value="${s.pv_kwp??3.6}"></div>
-    <div class="field"><label>Wirkungsgrad (0–1)</label><input id="w-eff" type="number" step="any" value="${s.pv_efficiency??0.75}"></div>
-    <div class="field"><label>Batterie (kWh)</label><input id="w-cap" type="number" step="any" value="${s.battery_capacity_kwh??9.6}"></div>
-    <div class="field"><label>Wind-Schwelle (km/h)</label><input id="w-wind" type="number" value="${s.wind_threshold_kmh??10}"></div></div>`;
+    <div class="field"><label>PV-Leistung (kWp)</label><input id="w-pv" type="number" step="any" value="${esc(s.pv_kwp??3.6)}"></div>
+    <div class="field"><label>Wirkungsgrad (0–1)</label><input id="w-eff" type="number" step="any" value="${esc(s.pv_efficiency??0.75)}"></div>
+    <div class="field"><label>Batterie (kWh)</label><input id="w-cap" type="number" step="any" value="${esc(s.battery_capacity_kwh??9.6)}"></div>
+    <div class="field"><label>Wind-Schwelle (km/h)</label><input id="w-wind" type="number" value="${esc(s.wind_threshold_kmh??10)}"></div></div>`;
 }
 function wizCollect(kind){
   const s=WSITE, v=id=>{const e=$(id);return e?e.value:undefined;};
@@ -342,7 +345,7 @@ function updateReportLink(){
 }
 function renderSitesBar(){
   $("sites-bar").innerHTML = MODEL.sites.map((s,i)=>
-    `<div class="site-tab ${i===CUR?"active":""}" data-i="${i}">${s.name||s.site_id}</div>`).join("");
+    `<div class="site-tab ${i===CUR?"active":""}" data-i="${i}">${esc(s.name||s.site_id)}</div>`).join("");
   document.querySelectorAll(".site-tab").forEach(el=>el.onclick=()=>{ collectForm(); CUR=+el.dataset.i; renderSitesBar(); loadSiteIntoForm(); });
 }
 function loadSiteIntoForm(){
@@ -436,12 +439,12 @@ async function loadSystem(){
   try{
     const st = await apiGet("/settings/status");
     const inf = st.influxdb||{};
-    const sitesRows = (st.sites||[]).map(s=>`<div class="sysrow"><span>${s.name||s.site_id}</span>
+    const sitesRows = (st.sites||[]).map(s=>`<div class="sysrow"><span>${esc(s.name||s.site_id)}</span>
       <span><span class="dot ${s.ecowitt.last_seen?'ok':(s.ecowitt.enabled?'bad':'off')}"></span>Ecowitt
       &nbsp;<span class="dot ${s.growatt.last_seen?'ok':(s.growatt.enabled?'bad':'off')}"></span>Growatt
-      &nbsp;· ${s.weather_points} Wetter / ${s.energy_points} Energie</span></div>`).join("");
+      &nbsp;· ${esc(s.weather_points)} Wetter / ${esc(s.energy_points)} Energie</span></div>`).join("");
     $("system").innerHTML = `
-      <div class="sysrow"><span>InfluxDB</span><span><span class="dot ${inf.ok?'ok':'bad'}"></span>${inf.ok?'verbunden':'offline'} · ${inf.url||''}</span></div>
+      <div class="sysrow"><span>InfluxDB</span><span><span class="dot ${inf.ok?'ok':'bad'}"></span>${inf.ok?'verbunden':'offline'} · ${esc(inf.url||'')}</span></div>
       <div class="sysrow"><span>Datenpunkte</span><span>${(inf.buckets||{}).weather||0} Wetter · ${(inf.buckets||{}).energy||0} Energie · ${(inf.buckets||{}).forecasts||0} Forecasts</span></div>
       ${sitesRows}`;
   }catch(e){ $("system").innerHTML='<span class="muted">Status nicht verfügbar.</span>'; }

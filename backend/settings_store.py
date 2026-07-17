@@ -10,8 +10,9 @@ A "site" is a self-contained profile: location + optional Ecowitt/Growatt
 hardware + energy-system parameters. Every InfluxDB measurement is tagged with
 the site_id, and collectors run once per site.
 
-Secrets (currently only each site's Growatt password) are masked as "********"
-when read back; an empty value on write means "keep the existing secret".
+Secrets (each site's Growatt password and Ecowitt API keys) are masked as
+"********" when read back; a masked or empty value on write means "keep the
+existing secret".
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -37,11 +39,38 @@ _from_file = False  # True once settings.json has been loaded/saved
 
 
 # ── slug / helpers ─────────────────────────────────────────────────────────
+SITE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+TIMEZONE_RE = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}$")
+
+
 def slugify(name: str) -> str:
     s = (name or "").strip().lower()
     s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
     s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
     return s or "site"
+
+
+def _validated_number(key: str, value, lo: float, hi: float) -> float:
+    """Coerce a numeric setting, raising ValueError with a clear message."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number") from None
+    if math.isnan(num) or not (lo <= num <= hi):
+        raise ValueError(f"{key} must be between {lo} and {hi}")
+    return num
+
+
+# key -> (min, max). Applied whenever a site is created/updated via the API.
+_NUMERIC_LIMITS: dict[str, tuple[float, float]] = {
+    "latitude": (-90.0, 90.0),
+    "longitude": (-180.0, 180.0),
+    "altitude": (-500.0, 9000.0),
+    "pv_kwp": (0.0, 10_000.0),
+    "pv_efficiency": (0.0, 1.0),
+    "battery_capacity_kwh": (0.0, 100_000.0),
+    "wind_threshold_kmh": (0.0, 500.0),
+}
 
 
 def _default_site_from_env() -> dict:
@@ -106,7 +135,11 @@ def reports_config() -> dict:
 
 
 def _normalise_site(site: dict, existing: dict | None = None) -> dict:
-    """Coerce a (partial) site dict into the canonical shape, filling defaults."""
+    """Coerce a (partial) site dict into the canonical shape, filling defaults.
+
+    Raises ValueError on out-of-range coordinates/energy values or a malformed
+    timezone, so invalid input is rejected before anything is persisted.
+    """
     base = existing or {
         "ecowitt": {"enabled": False, "app_key": "", "api_key": "", "mac": ""},
         "growatt": {"enabled": False, "username": "", "password": "",
@@ -122,14 +155,27 @@ def _normalise_site(site: dict, existing: dict | None = None) -> dict:
         if key in site and site[key] is not None:
             out[key] = site[key]
 
+    for key, (lo, hi) in _NUMERIC_LIMITS.items():
+        if key in out and out[key] is not None:
+            out[key] = _validated_number(key, out[key], lo, hi)
+
+    tz = out.get("timezone") or "UTC"
+    if not isinstance(tz, str) or not TIMEZONE_RE.match(tz):
+        raise ValueError("timezone must be an IANA name like Europe/Berlin")
+    out["timezone"] = tz
+
     for group in ("ecowitt", "growatt"):
         if group in site and isinstance(site[group], dict):
             out.setdefault(group, {})
             for k, v in site[group].items():
                 out[group][k] = v
 
-    # site_id: keep existing, else derive from name.
-    out["site_id"] = (existing or {}).get("site_id") or site.get("site_id") or slugify(out.get("name", ""))
+    # site_id: keep existing, else derive from name. Always slugged, so ids are
+    # safe to embed in Flux queries, file names and URLs.
+    sid = (existing or {}).get("site_id") or site.get("site_id") or slugify(out.get("name", ""))
+    if not SITE_ID_RE.match(str(sid)):
+        sid = slugify(str(sid))
+    out["site_id"] = sid
     out.setdefault("name", out["site_id"])
     return out
 
@@ -198,7 +244,12 @@ def default_site_id() -> str:
 
 
 def get_site(site_id: str | None) -> dict | None:
-    """Resolve a site by id; None/unknown id falls back to the default site."""
+    """Resolve a site by id.
+
+    Only a missing/empty id falls back to the default site; an explicitly given
+    but unknown id returns None so callers can answer 404 instead of silently
+    serving another site's data.
+    """
     items = sites()
     if not items:
         return None
@@ -206,11 +257,18 @@ def get_site(site_id: str | None) -> dict | None:
         for s in items:
             if s["site_id"] == site_id:
                 return s
+        return None
     target = default_site_id()
     for s in items:
         if s["site_id"] == target:
             return s
     return items[0]
+
+
+def site_timezone_name(site_id: str | None) -> str:
+    """IANA timezone of a site (default site / env fallback when unknown)."""
+    site = get_site(site_id) or get_site(None) or {}
+    return site.get("timezone") or config.TIMEZONE or "UTC"
 
 
 def upsert_site(site: dict) -> dict:
@@ -234,7 +292,7 @@ def upsert_site(site: dict) -> dict:
                     sid = f"{base}-{n}"; n += 1
             site = {**site, "site_id": sid}
 
-        merged = _normalise_site(_unmask_site(site, existing), existing)
+        merged = _normalise_site(unmask_site(site, existing), existing)
         if existing is not None:
             idx = items.index(existing)
             items[idx] = merged
@@ -261,15 +319,20 @@ def delete_site(site_id: str) -> bool:
 
 
 # ── masking ────────────────────────────────────────────────────────────────
-def _mask_site(site: dict) -> dict:
+def mask_site(site: dict) -> dict:
+    """Copy of a site with every secret replaced by the mask marker."""
     out = copy.deepcopy(site)
     gw = out.get("growatt") or {}
     if gw.get("password"):
         gw["password"] = MASK
+    eco = out.get("ecowitt") or {}
+    for key in ("app_key", "api_key"):
+        if eco.get(key):
+            eco[key] = MASK
     return out
 
 
-def _unmask_site(incoming: dict, existing: dict | None) -> dict:
+def unmask_site(incoming: dict, existing: dict | None) -> dict:
     """Replace masked / empty secrets in incoming with the existing stored value."""
     out = copy.deepcopy(incoming)
     gw = out.get("growatt")
@@ -277,7 +340,17 @@ def _unmask_site(incoming: dict, existing: dict | None) -> dict:
         pw = gw.get("password")
         if pw in (None, "", MASK):
             gw["password"] = ((existing or {}).get("growatt") or {}).get("password", "")
+    eco = out.get("ecowitt")
+    if isinstance(eco, dict):
+        for key in ("app_key", "api_key"):
+            if eco.get(key) in (None, MASK):
+                eco[key] = ((existing or {}).get("ecowitt") or {}).get(key, "")
     return out
+
+
+# Backwards-compatible aliases (older callers used the underscore names).
+_mask_site = mask_site
+_unmask_site = unmask_site
 
 
 # ── public views ───────────────────────────────────────────────────────────
@@ -290,7 +363,7 @@ def public_settings() -> dict:
         "default_site": default_site_id(),
         "display": st.get("display", {}),
         "reports": reports_config(),
-        "sites": [_mask_site(s) for s in st.get("sites", [])],
+        "sites": [mask_site(s) for s in st.get("sites", [])],
     }
 
 
@@ -302,17 +375,21 @@ def apply_update(payload: dict) -> dict:
     """
     with _lock:
         st = load()
-        if isinstance(payload.get("display"), dict):
-            st.setdefault("display", {}).update(payload["display"])
-        if isinstance(payload.get("reports"), dict):
-            st.setdefault("reports", _default_reports()).update(payload["reports"])
+        # Validate the full site list BEFORE mutating any state, so an invalid
+        # payload leaves settings untouched.
+        new_sites = None
         if isinstance(payload.get("sites"), list):
             existing_by_id = {s["site_id"]: s for s in st.get("sites", [])}
             new_sites = []
             for incoming in payload["sites"]:
                 sid = incoming.get("site_id") or slugify(incoming.get("name", "site"))
                 prev = existing_by_id.get(sid)
-                new_sites.append(_normalise_site(_unmask_site({**incoming, "site_id": sid}, prev), prev))
+                new_sites.append(_normalise_site(unmask_site({**incoming, "site_id": sid}, prev), prev))
+        if isinstance(payload.get("display"), dict):
+            st.setdefault("display", {}).update(payload["display"])
+        if isinstance(payload.get("reports"), dict):
+            st.setdefault("reports", _default_reports()).update(payload["reports"])
+        if new_sites is not None:
             st["sites"] = new_sites
         if payload.get("default_site") and payload["default_site"] in [s["site_id"] for s in st.get("sites", [])]:
             st["default_site"] = payload["default_site"]
@@ -325,9 +402,11 @@ def frontend_config() -> dict:
     Public config the frontend can fetch instead of config.js. No secrets.
     """
     st = load()
+    import security  # local import: security has no settings dependency
+
     return {
         "configured": is_configured(),
-        "admin_pin_required": bool(config.ADMIN_PIN),
+        "admin_pin_required": security.pin_required(),
         "default_site": default_site_id(),
         "display": st.get("display", {}),
         "sites": [
@@ -357,25 +436,35 @@ def site_for_ecowitt(mac: str | None, passkey: str | None) -> dict | None:
     Resolve which site a Custom Server webhook belongs to.
 
     Ecowitt sends either a raw MAC or a PASSKEY (uppercase MD5 of the MAC).
-    Match on the raw MAC first, then on the PASSKEY hash. Falls back to the
-    default site so single-station setups keep working without configuration.
+    Match on the raw MAC first, then on the PASSKEY hash.
+
+    A payload that matches no configured station returns None so the webhook
+    can reject it - otherwise anyone who can reach the backend could inject
+    weather data (poisoning charts, the microclimate model and fire warnings).
+    Only when NO site has a station MAC configured at all (first run, wizard
+    not finished) does the default site accept the payload, so a fresh install
+    still sees data without configuration.
     """
     items = sites()
     if not items:
         return None
+    configured = [
+        (s, _norm_mac((s.get("ecowitt") or {}).get("mac", "")))
+        for s in items
+        if _norm_mac((s.get("ecowitt") or {}).get("mac", ""))
+    ]
+    if not configured:
+        return get_site(None)  # first-run fallback: no station MAC known yet
     nmac = _norm_mac(mac) if mac else ""
     pk = (passkey or "").lower()
-    for s in items:
-        site_mac = _norm_mac((s.get("ecowitt") or {}).get("mac", ""))
-        if not site_mac:
-            continue
+    for s, site_mac in configured:
         if nmac and nmac == site_mac:
             return s
         if pk:
             digest = hashlib.md5(site_mac.upper().encode()).hexdigest()
             if pk == digest:
                 return s
-    return get_site(None)  # default site
+    return None
 
 
 def reset_for_test() -> None:

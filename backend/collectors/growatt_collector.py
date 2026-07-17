@@ -17,6 +17,7 @@ import asyncio
 import logging
 from typing import Any
 
+import collector_status
 import config
 import db
 
@@ -429,11 +430,14 @@ async def run_poller(site: dict) -> None:
                     tags={"inverter": session.inverter_sn or "unknown", "site_id": sid},
                 )
                 log.info("[%s] growatt stored %d fields (soc=%s)", sid, len(fields), fields.get("battery_soc"))
+                collector_status.record_success(sid, "growatt")
             else:
                 log.warning("[%s] growatt poll returned no recognisable fields", sid)
+                collector_status.record_error(sid, "growatt", "no recognisable fields")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("[%s] growatt poll failed: %s", sid, exc)
+            collector_status.record_error(sid, "growatt", exc)
             session = None  # force re-login next round
         await asyncio.sleep(config.GROWATT_POLL_INTERVAL)

@@ -18,6 +18,7 @@ import time
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
+import collector_status
 import config
 import db
 import settings_store
@@ -196,8 +197,10 @@ async def ecowitt_webhook(request: Request):
     except Exception as exc:  # noqa: BLE001
         # Log the details server-side only; no internals in the response.
         log.error("influx write failed: %s", exc)
+        collector_status.record_error(site_id, "webhook", exc)
         raise HTTPException(status_code=503, detail="storage unavailable")
 
+    collector_status.record_success(site_id, "webhook")
     log.info("webhook stored %d fields for site=%s", len(fields), site_id)
     return {"status": "ok", "fields": len(fields), "site_id": site_id}
 
@@ -311,9 +314,13 @@ async def run_poller(site: dict) -> None:
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                await poll_once(client, site)
+                if await poll_once(client, site):
+                    collector_status.record_success(sid, "ecowitt_api")
+                else:
+                    collector_status.record_error(sid, "ecowitt_api", "no data (see log)")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.warning("[%s] ecowitt poll failed: %s", sid, exc)
+                collector_status.record_error(sid, "ecowitt_api", exc)
             await asyncio.sleep(config.ECOWITT_POLL_INTERVAL)

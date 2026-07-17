@@ -21,6 +21,7 @@ from datetime import date, datetime, timezone
 
 import httpx
 
+import collector_status
 import config
 import db
 
@@ -163,8 +164,10 @@ async def run_poller(site: dict) -> None:
                 )
                 n = archive_daily(raw, sid)
                 log.info("[%s] archived %d daily forecast snapshots", sid, n)
+                collector_status.record_success(sid, "openmeteo")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 log.warning("[%s] openmeteo archive failed: %s", sid, exc)
+                collector_status.record_error(sid, "openmeteo", exc)
             await asyncio.sleep(config.OPENMETEO_POLL_INTERVAL)

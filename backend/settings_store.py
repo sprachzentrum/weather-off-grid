@@ -61,6 +61,24 @@ def _validated_number(key: str, value, lo: float, hi: float) -> float:
     return num
 
 
+def _validated_alerts(block: dict) -> dict:
+    """Validate a site's alert-threshold group (see alerts.DEFAULTS)."""
+    import alerts  # lazy: alerts imports this module
+
+    out = dict(block)
+    for key, (lo, hi) in alerts.NUMERIC_LIMITS.items():
+        if key in out and out[key] not in (None, ""):
+            out[key] = _validated_number(f"alerts.{key}", out[key], lo, hi)
+        elif out.get(key) == "":
+            out[key] = None  # empty input = check disabled
+    cat = out.get("fire_min_category")
+    if cat is not None and cat not in alerts.FIRE_ORDER and cat != "off":
+        raise ValueError("alerts.fire_min_category must be one of "
+                         + ", ".join(alerts.FIRE_ORDER) + " or off")
+    out["enabled"] = bool(out.get("enabled"))
+    return out
+
+
 # key -> (min, max). Applied whenever a site is created/updated via the API.
 _NUMERIC_LIMITS: dict[str, tuple[float, float]] = {
     "latitude": (-90.0, 90.0),
@@ -164,11 +182,14 @@ def _normalise_site(site: dict, existing: dict | None = None) -> dict:
         raise ValueError("timezone must be an IANA name like Europe/Berlin")
     out["timezone"] = tz
 
-    for group in ("ecowitt", "growatt"):
+    for group in ("ecowitt", "growatt", "alerts"):
         if group in site and isinstance(site[group], dict):
             out.setdefault(group, {})
             for k, v in site[group].items():
                 out[group][k] = v
+
+    if isinstance(out.get("alerts"), dict):
+        out["alerts"] = _validated_alerts(out["alerts"])
 
     # site_id: keep existing, else derive from name. Always slugged, so ids are
     # safe to embed in Flux queries, file names and URLs.
@@ -424,6 +445,44 @@ def frontend_config() -> dict:
             for s in st.get("sites", [])
         ],
     }
+
+
+# ── backup / restore ───────────────────────────────────────────────────────
+def backup_state() -> dict:
+    """Full settings INCLUDING secrets, for the PIN-protected backup download."""
+    return copy.deepcopy(load())
+
+
+def restore_state(payload: dict) -> dict:
+    """
+    Validate and replace the complete settings state from an uploaded backup.
+    Every site runs through the same validation as normal saves; an invalid
+    backup raises ValueError and leaves the current state untouched.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("sites"), list):
+        raise ValueError("backup must be an object with a 'sites' list")
+    sites_norm = []
+    for s in payload["sites"]:
+        if not isinstance(s, dict):
+            raise ValueError("every entry in 'sites' must be an object")
+        sites_norm.append(_normalise_site(s))
+    if not sites_norm:
+        raise ValueError("backup contains no sites")
+    ids = [s["site_id"] for s in sites_norm]
+    if len(set(ids)) != len(ids):
+        raise ValueError("backup contains duplicate site ids")
+
+    default = payload.get("default_site")
+    new_state = {
+        "version": SCHEMA_VERSION,
+        "default_site": default if default in ids else ids[0],
+        "display": payload.get("display") if isinstance(payload.get("display"), dict) else {},
+        "reports": payload.get("reports") if isinstance(payload.get("reports"), dict) else _default_reports(),
+        "sites": sites_norm,
+    }
+    save_state(new_state)
+    log.info("settings restored from backup (%d sites)", len(sites_norm))
+    return public_settings()
 
 
 # ── ecowitt webhook routing ────────────────────────────────────────────────

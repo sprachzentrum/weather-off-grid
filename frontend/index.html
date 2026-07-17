@@ -17,8 +17,29 @@
     --txt:#e8e8f5; --dim:#9a9ac4; --accent:#00d4aa;
     --good:#00d4aa; --warn:#f4a261; --bad:#e63946; --blue:#4895ef;
     --radius:16px;
+    color-scheme:dark;
+  }
+  /* Light theme: explicit choice via data-theme, else system preference. */
+  :root[data-theme="light"]{
+    --bg:#f2f3f9; --card:#ffffff; --card-2:#e9ebf4; --line:#d7dae6;
+    --txt:#1a1a2e; --dim:#5a5a78; --accent:#00967a;
+    --good:#00967a; --warn:#b45309; --bad:#c1121f; --blue:#1d4ed8;
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme]){
+      --bg:#f2f3f9; --card:#ffffff; --card-2:#e9ebf4; --line:#d7dae6;
+      --txt:#1a1a2e; --dim:#5a5a78; --accent:#00967a;
+      --good:#00967a; --warn:#b45309; --bad:#c1121f; --blue:#1d4ed8;
+      color-scheme:light;
+    }
   }
   *{box-sizing:border-box;margin:0;padding:0}
+  /* Accessibility: visible keyboard focus + honour reduced-motion. */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}
+  }
   body{background:var(--bg);color:var(--txt);line-height:1.45;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;padding:16px;max-width:1400px;margin:0 auto;
@@ -38,9 +59,12 @@
   .title .sub{color:var(--dim);font-size:.82rem;margin-top:2px}
   .title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .site-switch{background:var(--card-2);color:var(--txt);border:1px solid var(--line);
-    border-radius:10px;padding:6px 10px;font-size:.9rem;font-weight:600;cursor:pointer}
-  .gear{font-size:1.3rem;text-decoration:none;opacity:.8;transition:opacity .2s}
+    border-radius:10px;padding:6px 10px;font-size:.9rem;font-weight:600;cursor:pointer;min-height:44px}
+  .gear{font-size:1.3rem;text-decoration:none;opacity:.8;transition:opacity .2s;
+    display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}
   .gear:hover{opacity:1}
+  .theme-btn{background:var(--card-2);color:var(--txt);border:1px solid var(--line);border-radius:10px;
+    min-width:44px;min-height:44px;font-size:1.1rem;cursor:pointer}
   .sun{display:flex;gap:18px;color:var(--dim);font-size:.85rem}
   .sun b{color:var(--txt);font-weight:600;display:block}
 
@@ -48,6 +72,14 @@
   .banner.show{display:block}
   .banner.warn{background:rgba(244,162,97,.12);border:1px solid rgba(244,162,97,.4);color:var(--warn)}
   .banner.err{background:rgba(230,57,70,.12);border:1px solid rgba(230,57,70,.4);color:var(--bad)}
+
+  /* Compact status strip: the most important values at a glance, no scrolling. */
+  .status-strip{display:flex;gap:6px 22px;flex-wrap:wrap;align-items:center;padding:12px 16px}
+  .st-item{display:flex;align-items:baseline;gap:6px;white-space:nowrap}
+  .st-item .e{font-size:1rem}
+  .st-item b{font-size:1.05rem;font-weight:700}
+  .st-item small{color:var(--dim);font-size:.72rem}
+  .stale{color:var(--warn)}
 
   /* Battery widget */
   .battery-wrap{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
@@ -220,6 +252,7 @@
       <div class="title-row">
         <h1 id="station-name">Weather Off-Grid</h1>
         <select id="site-switch" class="site-switch hidden" aria-label="Standort"></select>
+        <button id="theme-btn" class="theme-btn" type="button" title="Design: automatisch" aria-label="Hell-/Dunkelmodus umschalten">🌓</button>
         <a id="gear" href="settings.html" class="gear" title="Einstellungen" aria-label="Einstellungen">⚙️</a>
       </div>
       <div class="sub" id="location-sub"></div>
@@ -236,6 +269,13 @@
   <div id="fire-banner" class="banner err"></div>
   <!-- Frost warning banner (frost expected tonight) -->
   <div id="frost-banner" class="banner warn"></div>
+  <!-- Threshold alerts (configurable per site, /api/alerts) -->
+  <div id="alert-banner" class="banner warn" role="status"></div>
+
+  <!-- 1. Compact system status: the essentials without scrolling -->
+  <section id="sec-status">
+    <div class="card status-strip" id="status-strip"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
 
   <!-- 2. Battery -->
   <section id="sec-battery">
@@ -268,26 +308,16 @@
     <div class="card" id="frost"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
-  <section id="sec-planting">
-    <h2>🌱 <span data-i18n="planting_title">Pflanzkalender Gemüse</span></h2>
-    <div class="card" id="planting"><div class="skeleton" data-i18n="loading">Lade …</div></div>
-  </section>
-
-  <section id="sec-season">
-    <h2>🗓️ <span data-i18n="season_title">Gartensaison-Analyse</span></h2>
-    <div class="card" id="season"><div class="skeleton" data-i18n="loading">Lade …</div></div>
-  </section>
-
-  <!-- 4. 7-day forecast -->
-  <section>
-    <h2 data-i18n="forecast_7d">7-Tage-Vorhersage <span class="pill" id="mc-pill"></span></h2>
-    <div class="scroll" id="daily"><div class="skeleton" data-i18n="loading">Lade …</div></div>
-  </section>
-
-  <!-- 5. Hourly -->
+  <!-- 4. Next 24 hours (more urgent than the week) -->
   <section>
     <h2 data-i18n="next_24h">Nächste 24 Stunden</h2>
     <div class="scroll" id="hourly"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- 5. 7-day forecast -->
+  <section>
+    <h2 data-i18n="forecast_7d">7-Tage-Vorhersage <span class="pill" id="mc-pill"></span></h2>
+    <div class="scroll" id="daily"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
   <!-- 6. Charts -->
@@ -310,7 +340,18 @@
     <div class="grid og-grid" id="offgrid"><div class="skeleton" data-i18n="loading">Lade …</div></div>
   </section>
 
-  <!-- 8. Microclimate -->
+  <!-- 8. Garden details (least urgent: reference material) -->
+  <section id="sec-planting">
+    <h2>🌱 <span data-i18n="planting_title">Pflanzkalender Gemüse</span></h2>
+    <div class="card" id="planting"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <section id="sec-season">
+    <h2>🗓️ <span data-i18n="season_title">Gartensaison-Analyse</span></h2>
+    <div class="card" id="season"><div class="skeleton" data-i18n="loading">Lade …</div></div>
+  </section>
+
+  <!-- 9. Microclimate -->
   <section id="sec-microclimate">
     <h2 data-i18n="microclimate">Mikroklima-Lernfortschritt</h2>
     <div class="card" id="microclimate"><div class="skeleton" data-i18n="loading">Lade …</div></div>
@@ -361,6 +402,7 @@ const I18N = {
     season_title:"Gartensaison-Analyse",season_intro:"Monatsmittel & Frostnächte aus euren Stationsdaten:",season_meanmin:"Ø Tiefsttemperatur pro Monat",
     season_last_spring:"Letzter Frühjahrsfrost",season_first_autumn:"Erster Herbstfrost",season_frostdays:"Frostnächte gesamt",
     season_nodata:"Noch zu wenig Stationshistorie für eine Auswertung.",season_note:"Je mehr Winter aufgezeichnet sind, desto belastbarer die Aussage.",
+    theme_auto:"Design: automatisch",theme_light:"Design: hell",theme_dark:"Design: dunkel",stale:"Daten veraltet",
     months_short:["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"]},
   en:{loading:"Loading …",sunrise:"Sunrise",sunset:"Sunset",updated:"Updated",battery:"Battery",energy:"Energy",
     current_weather:"Current weather",forecast_7d:"7-day forecast",next_24h:"Next 24 hours",
@@ -396,6 +438,7 @@ const I18N = {
     season_title:"Garden-season analysis",season_intro:"Monthly means & frost nights from your station data:",season_meanmin:"Avg. minimum temperature per month",
     season_last_spring:"Last spring frost",season_first_autumn:"First autumn frost",season_frostdays:"Total frost nights",
     season_nodata:"Not enough station history yet for an analysis.",season_note:"The more winters recorded, the more reliable the verdict.",
+    theme_auto:"Theme: auto",theme_light:"Theme: light",theme_dark:"Theme: dark",stale:"data stale",
     months_short:["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]},
   es:{loading:"Cargando …",sunrise:"Amanecer",sunset:"Atardecer",updated:"Actualizado",battery:"Batería",energy:"Energía",
     current_weather:"Tiempo actual",forecast_7d:"Pronóstico 7 días",next_24h:"Próximas 24 horas",
@@ -431,6 +474,7 @@ const I18N = {
     season_title:"Análisis de temporada",season_intro:"Promedios mensuales y noches de helada de tu estación:",season_meanmin:"Temperatura mínima media por mes",
     season_last_spring:"Última helada de primavera",season_first_autumn:"Primera helada de otoño",season_frostdays:"Noches de helada totales",
     season_nodata:"Aún no hay suficiente historial para analizar.",season_note:"Cuantos más inviernos registrados, más fiable la conclusión.",
+    theme_auto:"Tema: automático",theme_light:"Tema: claro",theme_dark:"Tema: oscuro",stale:"datos antiguos",
     months_short:["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]}
 };
 /* Zambretti forecast texts, index 0 (best) .. 25 (worst). */
@@ -489,6 +533,28 @@ const fmt0 = v => fmt(v,0);
 /* HTML-escape for every user-editable value rendered via innerHTML (site
    names etc.) - a crafted name must never execute as markup/script. */
 const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ── theme: auto (system) / light / dark, persisted in localStorage ── */
+const THEME_BG = {dark:"#0f0f1a", light:"#f2f3f9"};
+function themePref(){ return localStorage.getItem("wog:theme") || "auto"; }
+function applyTheme(){
+  const p = themePref();
+  if(p==="light" || p==="dark") document.documentElement.dataset.theme = p;
+  else document.documentElement.removeAttribute("data-theme");
+  const light = p==="light" || (p==="auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute("content", THEME_BG[light?"light":"dark"]);
+  const btn = $("theme-btn");
+  if(btn){ btn.textContent = p==="light"?"☀️":p==="dark"?"🌙":"🌓"; btn.title = t("theme_"+p); }
+}
+function cycleTheme(){
+  const order = ["auto","light","dark"];
+  const next = order[(order.indexOf(themePref())+1)%order.length];
+  if(next==="auto") localStorage.removeItem("wog:theme");
+  else localStorage.setItem("wog:theme", next);
+  applyTheme();
+  refresh();   // rebuild charts with the new palette
+}
 
 let CFG = (typeof CONFIG !== "undefined") ? Object.assign({}, CONFIG) : {};
 let API = ((CFG.BACKEND_URL) || (location.origin + "/api")).replace(/\/$/, "");
@@ -733,9 +799,9 @@ function renderLocalForecast(lf){
     </div>`;
   const ps = lf.pressure_series || {};
   const labels = (ps.time||[]).map(x=>{const d=new Date(x); return String(d.getHours()).padStart(2,"0")+"h";});
-  const opts = JSON.parse(JSON.stringify(C_OPTS));
+  const opts = chartOpts();
   opts.plugins.legend = {display:false};
-  opts.scales.x.maxTicksLimit = 6;
+  opts.scales.x.ticks.maxTicksLimit = 6;
   chart("chBaro",{type:"line",data:{labels,datasets:[
     {label:"hPa",data:ps.pressure_relative,borderColor:"#00d4aa",backgroundColor:"rgba(0,212,170,.12)",
      fill:true,tension:.35,pointRadius:0,spanGaps:true}]},options:opts});
@@ -992,10 +1058,15 @@ function renderMicroclimate(mc){
    Charts
    ============================================================ */
 let charts={};
-const C_OPTS={responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
-  plugins:{legend:{labels:{color:"#9a9ac4",boxWidth:12,font:{size:11}}}},
-  scales:{x:{ticks:{color:"#9a9ac4",maxRotation:0,autoSkip:true,maxTicksLimit:7,font:{size:9}},grid:{color:"#22223f"}},
-    y:{ticks:{color:"#9a9ac4",font:{size:9}},grid:{color:"#22223f"}}}};
+/* Chart colours follow the active theme (read live from the CSS variables). */
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function chartOpts(){
+  const tick = cssVar("--dim") || "#9a9ac4", grid = cssVar("--line") || "#22223f";
+  return {responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+    plugins:{legend:{labels:{color:tick,boxWidth:12,font:{size:11}}}},
+    scales:{x:{ticks:{color:tick,maxRotation:0,autoSkip:true,maxTicksLimit:7,font:{size:9}},grid:{color:grid}},
+      y:{ticks:{color:tick,font:{size:9}},grid:{color:grid}}}};
+}
 function chart(id,cfg){ if(charts[id])charts[id].destroy(); charts[id]=new Chart($(id),cfg); }
 const tlabel = iso => { const d=new Date(iso); return `${d.getDate()}.${d.getMonth()+1}. ${String(d.getHours()).padStart(2,"0")}h`; };
 
@@ -1003,21 +1074,21 @@ function renderCharts(hist, bat, nights){
   const A="#00d4aa",B="#4895ef",W="#f4a261";
   const hl=(hist.time||[]).map(tlabel);
   chart("chTemp",{type:"line",data:{labels:hl,datasets:[
-    {label:"°C",data:hist.temperature_outdoor,borderColor:A,backgroundColor:"rgba(0,212,170,.12)",fill:true,tension:.35,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+    {label:"°C",data:hist.temperature_outdoor,borderColor:A,backgroundColor:"rgba(0,212,170,.12)",fill:true,tension:.35,pointRadius:0,spanGaps:true}]},options:chartOpts()});
   chart("chWind",{type:"line",data:{labels:hl,datasets:[
     {label:t("wind"),data:hist.wind_speed,borderColor:A,fill:false,tension:.35,pointRadius:0,spanGaps:true},
-    {label:t("gust"),data:hist.wind_gust,borderColor:W,borderDash:[5,4],fill:false,tension:.35,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+    {label:t("gust"),data:hist.wind_gust,borderColor:W,borderDash:[5,4],fill:false,tension:.35,pointRadius:0,spanGaps:true}]},options:chartOpts()});
   chart("chRain",{type:"bar",data:{labels:hl,datasets:[
-    {label:"mm",data:hist.rain_rate,backgroundColor:B,borderRadius:3}]},options:C_OPTS});
+    {label:"mm",data:hist.rain_rate,backgroundColor:B,borderRadius:3}]},options:chartOpts()});
   chart("chPress",{type:"line",data:{labels:hl,datasets:[
-    {label:"hPa",data:hist.pressure_relative,borderColor:A,backgroundColor:"rgba(0,212,170,.1)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+    {label:"hPa",data:hist.pressure_relative,borderColor:A,backgroundColor:"rgba(0,212,170,.1)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:chartOpts()});
 
   if(bat && bat.series && (bat.series.battery_soc||[]).some(v=>v!=null)){
     const bl=(bat.series.time||[]).map(tlabel);
     chart("chSoc",{type:"line",data:{labels:bl,datasets:[
-      {label:"SOC %",data:bat.series.battery_soc,borderColor:A,backgroundColor:"rgba(0,212,170,.12)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+      {label:"SOC %",data:bat.series.battery_soc,borderColor:A,backgroundColor:"rgba(0,212,170,.12)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:chartOpts()});
     chart("chPv",{type:"line",data:{labels:bl,datasets:[
-      {label:"PV W",data:bat.series.pv_power,borderColor:W,backgroundColor:"rgba(244,162,97,.15)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:C_OPTS});
+      {label:"PV W",data:bat.series.pv_power,borderColor:W,backgroundColor:"rgba(244,162,97,.15)",fill:true,tension:.3,pointRadius:0,spanGaps:true}]},options:chartOpts()});
     $("cc-soc").classList.remove("hidden"); $("cc-pv").classList.remove("hidden");
   } else {
     $("cc-soc").classList.add("hidden"); $("cc-pv").classList.add("hidden");
@@ -1027,10 +1098,54 @@ function renderCharts(hist, bat, nights){
   if(nl.length){
     const labels = nl.map(n=>{ const d=new Date(n.date+"T12:00"); return `${d.getDate()}.${d.getMonth()+1}.`; });
     chart("chNight",{type:"bar",data:{labels,datasets:[
-      {label:"kWh",data:nl.map(n=>n.consumption_kwh),backgroundColor:W,borderRadius:3}]},options:C_OPTS});
+      {label:"kWh",data:nl.map(n=>n.consumption_kwh),backgroundColor:W,borderRadius:3}]},options:chartOpts()});
     $("cc-night").classList.remove("hidden");
   } else {
     $("cc-night").classList.add("hidden");
+  }
+}
+
+/* ============================================================
+   Status strip + threshold alerts
+   ============================================================ */
+function renderStatusStrip(res){
+  const el = $("status-strip"); if(!el) return;
+  const items = [];
+  const w = (res.current && res.current.weather) || {};
+  if(w.temperature_outdoor!=null)
+    items.push(`<span class="st-item"><span class="e">🌡️</span><b>${fmt(w.temperature_outdoor)}°</b></span>`);
+  const b = res.current && res.current.battery;
+  if(b && b.battery_soc!=null){
+    const soc=b.battery_soc, c=soc>50?"var(--good)":soc>20?"var(--warn)":"var(--bad)";
+    items.push(`<span class="st-item"><span class="e">🔋</span><b style="color:${c}">${fmt0(soc)} %</b></span>`);
+  }
+  const a = res.autonomy || {};
+  if(a.autonomy_days!=null){
+    const c=a.status==="green"?"var(--good)":a.status==="yellow"?"var(--warn)":a.status==="red"?"var(--bad)":"var(--dim)";
+    items.push(`<span class="st-item"><span class="e">⏳</span><b style="color:${c}">${a.autonomy_capped?"&gt; ":"≈ "}${fmt(a.autonomy_days,1)} ${t("days")}</b><small>${t("autonomy")}</small></span>`);
+  }
+  if(w.rain_daily!=null)
+    items.push(`<span class="st-item"><span class="e">🌧️</span><b>${fmt(w.rain_daily)} mm</b><small>${t("rain_today")}</small></span>`);
+  else{
+    const d0 = res.forecast && res.forecast.days && res.forecast.days[0];
+    const prob = d0 && ((d0.corrected&&d0.corrected.precip_prob) ?? d0.precip_prob);
+    if(prob!=null) items.push(`<span class="st-item"><span class="e">☔</span><b>${fmt0(prob)} %</b><small>${t("rain")}</small></span>`);
+  }
+  const fd = res.fireDanger;
+  if(fd && fd.category){
+    const c = FIRE_CAT[fd.category] || FIRE_CAT.low;
+    items.push(`<span class="st-item"><span class="e">${c.emoji}</span><b style="color:${c.color}">${c[LANG]||c.de}</b><small>${t("fire_danger")}</small></span>`);
+  }
+  el.innerHTML = items.length ? items.join("") : `<div class="skeleton">–</div>`;
+}
+
+function updateAlertBanner(al){
+  const b = $("alert-banner"); if(!b) return;
+  if(al && al.alerts && al.alerts.length){
+    b.textContent = "⚠️ " + al.alerts.map(x=>x.text||x.label).join(" · ");
+    b.className = "banner warn show";
+  } else {
+    b.className = "banner warn";
   }
 }
 
@@ -1061,6 +1176,7 @@ async function refresh(){
     energyToday: api(siteParam("/energy/today")),
     autonomy: api(siteParam(`/energy/autonomy?capacity_kwh=${cap}&pv_kwp=${pv}&pv_eff=${eff}`)),
     microclimate: api(siteParam("/microclimate")),
+    alerts: api(siteParam("/alerts")),
   };
   const results = {}; let anyCached=false, anyOk=false, oldest=Date.now();
   for(const [key,p] of Object.entries(calls)){
@@ -1072,10 +1188,20 @@ async function refresh(){
   if(results.current){
     const c=results.current;
     if(c.sun){ $("sunrise").textContent=c.sun.sunrise?hhmm(c.sun.sunrise):"–"; $("sunset").textContent=c.sun.sunset?hhmm(c.sun.sunset):"–"; }
-    $("updated").textContent = c.updated ? hhmm(c.updated) : new Date().toLocaleTimeString(LANG,{hour:"2-digit",minute:"2-digit"});
+    // Mark the "updated" stamp when the newest reading is clearly stale
+    // (older than two refresh intervals), so old data is never mistaken
+    // for live data.
+    const up = $("updated");
+    const ageMs = c.updated ? Date.now() - new Date(c.updated).getTime() : null;
+    const stale = ageMs!=null && ageMs > 2*REFRESH*1000;
+    up.textContent = (stale?"⚠ ":"") + (c.updated ? hhmm(c.updated) : new Date().toLocaleTimeString(LANG,{hour:"2-digit",minute:"2-digit"}));
+    up.classList.toggle("stale", stale);
+    up.title = stale ? t("stale") : "";
     if(CFG.SHOW_BATTERY!==false) renderBattery(c, results.energyToday, results.autonomy);
     renderCurrent(c, results.localforecast);
   }
+  renderStatusStrip(results);
+  updateAlertBanner(results.alerts);
   if(results.localforecast) renderLocalForecast(results.localforecast);
   if(results.fireDanger) renderFireDanger(results.fireDanger);
   if(results.frost) renderFrost(results.frost);
@@ -1101,6 +1227,13 @@ function switchSite(){
   refresh();
 }
 async function init(){
+  applyTheme();
+  $("theme-btn").onclick = cycleTheme;
+  if(window.matchMedia){
+    matchMedia("(prefers-color-scheme: light)").addEventListener("change", ()=>{
+      if(themePref()==="auto"){ applyTheme(); refresh(); }
+    });
+  }
   const apiOk = await loadConfig();
   if(!apiOk && typeof CONFIG === "undefined" && SITES.length===0){
     $("setup").classList.remove("hidden");   // no backend and no config.js

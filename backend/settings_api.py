@@ -22,6 +22,7 @@ import logging
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
 
 import api
+import collector_status
 import config
 import db
 import security
@@ -108,6 +109,29 @@ async def post_site(site: dict = Body(...)):
     return settings_store.mask_site(saved)
 
 
+@router.get("/settings/backup", dependencies=[Depends(require_pin)])
+async def settings_backup():
+    """Download the full settings (incl. secrets) as a restorable JSON backup."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        settings_store.backup_state(),
+        headers={"Content-Disposition":
+                 'attachment; filename="weather-off-grid-settings.json"'},
+    )
+
+
+@router.post("/settings/restore", dependencies=[Depends(require_pin)])
+async def settings_restore(payload: dict = Body(...)):
+    """Replace the settings from an uploaded backup (validated before saving)."""
+    try:
+        result = settings_store.restore_state(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await _after_change()
+    return result
+
+
 @router.delete("/sites/{site_id}", dependencies=[Depends(require_pin)])
 async def delete_site(site_id: str):
     ok = settings_store.delete_site(site_id)
@@ -140,6 +164,8 @@ async def settings_status():
             "growatt": {"enabled": bool(gw.get("enabled")), "last_seen": _iso(energy_seen)},
             "weather_points": db.count_points(config.BUCKET_WEATHER, site_id=sid) if influx_ok else 0,
             "energy_points": db.count_points(config.BUCKET_ENERGY, site_id=sid) if influx_ok else 0,
+            # Per-collector health: last successful poll/delivery + last error.
+            "collectors": collector_status.for_site(sid),
         })
     return {
         "influxdb": {"ok": influx_ok, "url": config.INFLUXDB_URL, "buckets": buckets},

@@ -9,6 +9,9 @@ coordinates (cached per site). The microclimate model is computed per site.
 """
 from __future__ import annotations
 
+import asyncio
+import csv
+import io
 import logging
 import os
 import time
@@ -21,8 +24,9 @@ except ImportError:  # pragma: no cover
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
+import alerts
 import config
 import db
 import settings_store
@@ -968,6 +972,71 @@ async def season_endpoint(site: str | None = Query(None),
     hemisphere = planting.hemisphere_for(s.get("latitude"))
     stats = frost.season_stats(s["site_id"], days=days, hemisphere=hemisphere)
     return {"site_id": s["site_id"], "hemisphere": hemisphere, "stats": stats}
+
+
+# ── /api/alerts ────────────────────────────────────────────────────────────
+@router.get("/alerts")
+async def alerts_endpoint(site: str | None = Query(None)):
+    """Active threshold alerts for a site (see alerts.py). The dashboard shows
+    these as a banner; the background checker e-mails them independently."""
+    s = _resolve_site(site)
+    items = await asyncio.to_thread(alerts.current_alerts, s)
+    return {
+        "site_id": s["site_id"],
+        "alerts": items,
+        "thresholds": alerts.thresholds_for(s),
+    }
+
+
+# ── /api/export/csv ────────────────────────────────────────────────────────
+_EXPORT_BUCKETS = {
+    "weather": ("station", [
+        "temperature_outdoor", "humidity_outdoor", "temperature_indoor",
+        "humidity_indoor", "wind_speed", "wind_gust", "wind_direction",
+        "pressure_relative", "rain_rate", "rain_daily", "solar_radiation",
+        "uv_index", "dewpoint", "temperature_feels_like",
+    ]),
+    "energy": ("energy", [
+        "battery_soc", "battery_power", "battery_voltage",
+        "pv_power", "load_power",
+    ]),
+}
+_EXPORT_WINDOWS = ("15m", "1h", "6h", "1d")
+
+
+@router.get("/export/csv")
+async def export_csv(
+    site: str | None = Query(None),
+    bucket: str = Query("weather"),
+    days: int = Query(30, ge=1, le=365),
+    every: str = Query("1h"),
+):
+    """Download the stored history of a site as CSV (mean-aggregated)."""
+    if bucket not in _EXPORT_BUCKETS:
+        raise HTTPException(status_code=400, detail="bucket must be weather|energy")
+    if every not in _EXPORT_WINDOWS:
+        raise HTTPException(status_code=400,
+                            detail="every must be one of " + "|".join(_EXPORT_WINDOWS))
+    s = _resolve_site(site)
+    measurement, fields = _EXPORT_BUCKETS[bucket]
+    influx_bucket = config.BUCKET_WEATHER if bucket == "weather" else config.BUCKET_ENERGY
+    series = await asyncio.to_thread(
+        db.series, influx_bucket, measurement, fields,
+        s["site_id"], days, every,
+    )
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["time", *fields])
+    for i, t in enumerate(series.get("time", [])):
+        writer.writerow([t, *(series[f][i] if series[f][i] is not None else ""
+                              for f in fields)])
+    filename = f"{s['site_id']}-{bucket}-{days}d.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── /api/reports/latest ────────────────────────────────────────────────────

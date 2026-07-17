@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import alerts
 import api
 import config
 import db
@@ -63,25 +64,34 @@ async def _startup() -> None:
     settings_store.load()
     await manager.reload()
 
-    # Background report scheduler (weekly/monthly PDF e-mails). One global task.
-    global _report_task
+    # Background report scheduler (weekly/monthly PDF e-mails) and threshold
+    # alert checker. One global task each.
+    global _report_task, _alert_task
     _report_task = asyncio.create_task(report_generator.run_scheduler())
+    _alert_task = asyncio.create_task(alerts.run_checker())
     log.info("backend ready (%d site(s) configured)", len(settings_store.sites()))
 
 
 _report_task: asyncio.Task | None = None
+_alert_task: asyncio.Task | None = None
+
+
+async def _stop_task(task: asyncio.Task | None, name: str) -> None:
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        log.warning("%s ended with error: %s", name, exc)
 
 
 async def _shutdown() -> None:
     await manager.stop()
-    if _report_task is not None:
-        _report_task.cancel()
-        try:
-            await _report_task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:  # noqa: BLE001
-            log.warning("report scheduler ended with error: %s", exc)
+    await _stop_task(_report_task, "report scheduler")
+    await _stop_task(_alert_task, "alert checker")
     await api.aclose_client()
     db.close()
     log.info("backend stopped")
